@@ -55,7 +55,7 @@ jobs:
           version="${BASH_REMATCH[1]}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "MSI_PATH=${msis[0]}" >> "$GITHUB_ENV"
-          sha256sum "${msis[0]}" | tee dist/SHA256SUMS
+          ( cd dist && sha256sum "$file" ) | tee dist/SHA256SUMS
 
       - name: Publish tagged release
         env:
