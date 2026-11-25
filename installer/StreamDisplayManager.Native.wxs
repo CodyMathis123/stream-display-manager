@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Stream Display Manager Native Preview"
+           Manufacturer="CodyMathis"
+           Version="$(var.StreamDisplayManagerVersion)"
+           Scope="perUser"
+           UpgradeCode="9850E424-36AF-424A-B3EA-FA8DAD29E174">
+    <SummaryInformation Description="Native Win32 Stream Display Manager preview (manual launch)" />
+    <MajorUpgrade DowngradeErrorMessage="A newer native preview is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="ARPCOMMENTS" Value="Native Win32 preview. Does not replace or auto-start the managed Stream Display Manager." />
+    <Icon Id="NativeIcon.ico" SourceFile="$(var.IconPath)" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLFOLDER" Name="StreamDisplayManagerNativePreview">
+        <Component Id="NativeExecutable" Guid="62F72BAF-B457-407B-9EFA-A8102EB585B3">
+          <File Id="NativeExe" Source="$(var.PublishDir)\StreamDisplayManager.Native.exe">
+            <Shortcut Id="NativeStartMenuShortcut"
+                      Directory="ProgramMenuFolder"
+                      Name="Stream Display Manager (Native Preview)"
+                      Description="Test lightweight native streaming display management"
+                      Advertise="no"
+                      Icon="NativeIcon.ico"
+                      WorkingDirectory="INSTALLFOLDER" />
+          </File>
+          <RegistryValue Root="HKCU" Key="Software\CodyMathis\StreamDisplayManagerNativePreview"
+                         Name="InstalledExecutable" Type="string"
+                         Value="[INSTALLFOLDER]StreamDisplayManager.Native.exe" KeyPath="yes" />
+          <RemoveFolder Id="RemoveNativePreview" Directory="INSTALLFOLDER" On="uninstall" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Complete" Title="Native Preview" Level="1">
+      <ComponentRef Id="NativeExecutable" />
+    </Feature>
+  </Package>
+</Wix>
