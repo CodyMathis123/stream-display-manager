@@ -1,0 +1,50 @@
+name: Native C++ preview (MSVC)
+on:
+  push:
+    branches:
+      - feature/native-cpp-tray-and-display-modes
+  pull_request:
+    branches:
+      - feature/architecture-and-observer-phase1
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate branded icon
+        shell: pwsh
+        run: |
+          ./scripts/Generate-StreamDisplayManagerIcon.ps1 -OutputPath src/StreamDisplayManager.App/Assets/StreamDisplayManager.ico
+      - name: Compile native Win32 executable (same MSVC strategy as SensorDash)
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $install = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$install) { throw 'MSVC x64 tools missing' }
+          $vcvars = Join-Path $install 'VC/Auxiliary/Build/vcvars64.bat'
+          New-Item -ItemType Directory -Force -Path native-output | Out-Null
+          $command = 'call "' + $vcvars + '" && rc /nologo /fo native-output\StreamDisplayManager.res native\StreamDisplayManager.rc && cl /nologo /std:c++20 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /Fe:native-output\StreamDisplayManager.Native.exe native\StreamDisplayManager.cpp native-output\StreamDisplayManager.res user32.lib shell32.lib advapi32.lib'
+          & cmd.exe /d /c $command
+          if ($LASTEXITCODE -ne 0) { throw 'Native C++ build failed' }
+      - name: Native self-test (no display changes)
+        shell: pwsh
+        run: |
+          $app = (Resolve-Path native-output/StreamDisplayManager.Native.exe).Path
+          $p = Start-Process -FilePath $app -ArgumentList '--self-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Native self-test failed: $($p.ExitCode)" }
+          if ((Get-Item $app).Length -gt 4000000) { throw 'Native executable unexpectedly large' }
+      - name: Upload native standalone preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: StreamDisplayManager-Native-preview
+          path: native-output/StreamDisplayManager.Native.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
