@@ -32,17 +32,28 @@ public static class PlacementPlanner
             return new(PlacementStatus.AmbiguousTarget, "Target geometry is invalid.",
                 observation.SteamAppId);
 
-        if (observation.SteamAppId is not long appId ||
-            !ObservedGameRules.TryGetValue(appId, out string? expectedProcessName))
-        {
+        if (observation.SteamAppId is not long appId || appId <= 0)
             return new(PlacementStatus.UnrecognizedGame,
-                "No verified diagnostic process rule for the Steam App ID.",
+                "No Steam App ID was confirmed for the session.",
                 observation.SteamAppId, TargetDisplay: target.DeviceName);
-        }
 
+        // Known games are matched by their observed executable name. For any
+        // other installed Steam game, the app may supply live PIDs whose
+        // executable is physically inside that App ID's Steam install folder.
+        // Never guess using only window size or current desktop foreground.
+        bool hasRule = ObservedGameRules.TryGetValue(appId, out string? expectedProcessName);
+        bool hasInstallEvidence = observation.SteamInstalledGameProcessIds is { Count: > 0 };
+        if (!hasRule && !hasInstallEvidence)
+            return new(PlacementStatus.UnrecognizedGame,
+                "No game process identity from a known rule or Steam installation.",
+                appId, TargetDisplay: target.DeviceName);
+
+        string evidence = hasRule ? "observed-appid-process-rule" : "steam-app-install-path";
         PlacementWindow[] matches = observation.Windows
-            .Where(w => string.Equals(w.ProcessName, expectedProcessName,
-                StringComparison.OrdinalIgnoreCase))
+            .Where(w => hasRule
+                ? string.Equals(w.ProcessName, expectedProcessName,
+                    StringComparison.OrdinalIgnoreCase)
+                : observation.SteamInstalledGameProcessIds!.Contains(w.ProcessId))
             .ToArray();
 
         if (matches.Length == 0)
@@ -56,12 +67,18 @@ public static class PlacementPlanner
                 appId, TargetDisplay: target.DeviceName);
 
         PlacementWindow window = matches[0];
+        PlacementPlan WithIdentity(PlacementPlan decision) => decision with
+        {
+            WindowProcessId = window.ProcessId,
+            WindowProcessName = window.ProcessName,
+            IdentityEvidence = evidence
+        };
         if (window.IsMinimized || window.Width < 640 || window.Height < 360 ||
             string.IsNullOrWhiteSpace(window.WindowHandle) || window.ProcessId == 0)
         {
-            return new(PlacementStatus.UnsafeWindow,
+            return WithIdentity(new(PlacementStatus.UnsafeWindow,
                 "Candidate window is minimized, too small or missing identity.",
-                appId, TargetDisplay: target.DeviceName);
+                appId, TargetDisplay: target.DeviceName));
         }
 
         // Screen.FromHandle may temporarily identify the *nearest* screen.
@@ -79,28 +96,28 @@ public static class PlacementPlanner
             !string.Equals(containing[0].DeviceName, window.DeviceName,
                 StringComparison.OrdinalIgnoreCase))
         {
-            return new(PlacementStatus.UnknownWindowLocation,
+            return WithIdentity(new(PlacementStatus.UnknownWindowLocation,
                 "Game geometry and monitor attribution do not agree.",
-                appId, WindowHandle: window.WindowHandle, TargetDisplay: target.DeviceName);
+                appId, WindowHandle: window.WindowHandle, TargetDisplay: target.DeviceName));
         }
 
         PlacementScreen current = containing[0];
         if (string.Equals(current.DeviceName, target.DeviceName,
             StringComparison.OrdinalIgnoreCase))
         {
-            return new(PlacementStatus.AlreadyOnTarget,
-                "Steam already placed the observed game window on SudoVDA.",
-                appId, window.WindowHandle, current.DeviceName, target.DeviceName);
+            return WithIdentity(new(PlacementStatus.AlreadyOnTarget,
+                "The game window is already on SudoVDA.",
+                appId, window.WindowHandle, current.DeviceName, target.DeviceName));
         }
 
         if (!current.IsPhysical)
-            return new(PlacementStatus.UnknownWindowLocation,
+            return WithIdentity(new(PlacementStatus.UnknownWindowLocation,
                 "Game window is not on a trusted physical source monitor.",
-                appId, window.WindowHandle, current.DeviceName, target.DeviceName);
+                appId, window.WindowHandle, current.DeviceName, target.DeviceName));
 
-        return new(PlacementStatus.WouldMove,
-            "Eligible-looking game window is on the physical monitor.",
-            appId, window.WindowHandle, current.DeviceName, target.DeviceName);
+        return WithIdentity(new(PlacementStatus.WouldMove,
+            "Game window is on the physical monitor while SudoVDA is active.",
+            appId, window.WindowHandle, current.DeviceName, target.DeviceName));
     }
 }
 
@@ -127,14 +144,19 @@ public sealed record PlacementWindow(
 
 public sealed record PlacementObservation(
     bool SessionConfirmed, bool TopologyStable, long? SteamAppId,
-    IReadOnlyList<PlacementScreen> Screens, IReadOnlyList<PlacementWindow> Windows);
+    IReadOnlyList<PlacementScreen> Screens, IReadOnlyList<PlacementWindow> Windows,
+    IReadOnlyCollection<uint>? SteamInstalledGameProcessIds = null);
 
 public sealed record PlacementPlan(
     PlacementStatus Status, string Reason, long? AppId = null,
     string? WindowHandle = null, string? SourceDisplay = null,
     string? TargetDisplay = null)
 {
+    // The planner never invokes Win32. Only app-side code may execute a plan.
     public bool IsDryRun => true;
+    public uint? WindowProcessId { get; init; }
+    public string? WindowProcessName { get; init; }
+    public string IdentityEvidence { get; init; } = "none";
 }
 
 /// <summary>
@@ -174,68 +196,76 @@ public sealed class PlacementPlanStabilizer(TimeSpan minimumDuration)
 }
 
 
-// One initial move, then one follow-up ONLY after the app's first move
-// has been independently confirmed on SudoVDA. No third attempt.
-public sealed class ExperimentalAutoMovePolicy
+// Generic auto-placement policy for confidently identified Steam game windows.
+// One initial correction and one verified follow-up for a game that resets
+// its output after launch (as observed in DOOM). No continuous fight/loop.
+public sealed class AutomaticPlacementPolicy
 {
-    public const long EnabledAppId = 3017860;
     public const int MaxAttemptsPerSession = 2;
     private long _session = -1;
+    private long _appId = -1;
     private int _attempts;
     private string? _ownedWindow;
+    private uint? _ownedPid;
     private bool _firstMoveVerified;
 
     public AutoMoveDecision Observe(PlacementPlan plan, long sessionNumber)
     {
-        if (sessionNumber <= 0 || plan.AppId != EnabledAppId)
-            return new(false, "Not an enabled DOOM streaming session.");
+        if (sessionNumber <= 0 || plan.AppId is not long appId || appId <= 0)
+            return new(false, "No confirmed Steam game/session.");
 
-        if (_session != sessionNumber)
+        if (_session != sessionNumber || _appId != appId)
         {
             _session = sessionNumber;
+            _appId = appId;
             _attempts = 0;
             _ownedWindow = null;
+            _ownedPid = null;
             _firstMoveVerified = false;
         }
 
-        if (string.IsNullOrWhiteSpace(plan.WindowHandle))
-            return new(false, "Window identity unavailable.");
-
-        string handle = plan.WindowHandle;
         if (plan.Status == PlacementStatus.AlreadyOnTarget)
-            return new(false, "DOOM is currently on SudoVDA; no move needed.");
+            return new(false, "Game is already on SudoVDA.");
 
-        if (plan.Status != PlacementStatus.WouldMove)
-            return new(false, "No valid misplaced game window.");
+        if (plan.Status != PlacementStatus.WouldMove ||
+            string.IsNullOrWhiteSpace(plan.WindowHandle) ||
+            plan.WindowProcessId is not uint pid || pid == 0 ||
+            string.IsNullOrWhiteSpace(plan.WindowProcessName) ||
+            plan.IdentityEvidence == "none")
+            return new(false, "Game placement or process identity is not eligible.");
 
         if (_attempts == 0)
         {
             _attempts = 1;
-            _ownedWindow = handle;
-            return new(true, "Initial DOOM wrong-monitor placement.", false, 1);
+            _ownedWindow = plan.WindowHandle;
+            _ownedPid = pid;
+            return new(true, "Game first observed on a physical monitor.", false, 1);
         }
 
         if (_attempts >= MaxAttemptsPerSession)
-            return new(false, "Both permitted attempts used; stop.", true);
+            return new(false, "Two corrections used for this Steam session.", true);
 
-        if (!string.Equals(_ownedWindow, handle, StringComparison.OrdinalIgnoreCase))
-            return new(false, "HWND changed; no follow-up on a different window.", true);
+        if (!string.Equals(_ownedWindow, plan.WindowHandle, StringComparison.OrdinalIgnoreCase)
+            || _ownedPid != pid)
+            return new(false, "Game window/PID changed; no retry on another process.", true);
 
         if (!_firstMoveVerified)
-            return new(false, "First move was not verified on SudoVDA; no retry.", true);
+            return new(false, "First window move was not verified on SudoVDA.", true);
 
         _attempts = 2;
-        return new(true,
-            "The DOOM window returned to physical after a verified automatic move.",
+        return new(true, "Window returned to physical after a verified automatic move.",
             false, 2);
     }
 
-    public bool ConfirmOwnedMove(string windowHandle, long sessionNumber, int attemptNumber)
+    public bool ConfirmOwnedMove(
+        string windowHandle, uint processId, long appId, long sessionNumber, int attemptNumber)
     {
-        if (sessionNumber != _session || attemptNumber < 1 ||
-            attemptNumber != _attempts ||
+        if (sessionNumber != _session || appId != _appId ||
+            attemptNumber < 1 || attemptNumber != _attempts ||
+            processId != _ownedPid ||
             !string.Equals(_ownedWindow, windowHandle, StringComparison.OrdinalIgnoreCase))
             return false;
+
         if (attemptNumber == 1)
             _firstMoveVerified = true;
         return true;
