@@ -275,16 +275,59 @@ internal sealed class ObserverContext : ApplicationContext
                         executorEnabled = experimentalExecutor,
                         autoMoveReason = autoDecision.Reason,
                         autoDecision.ShouldAttempt,
-                        autoDecision.AttemptNumber
+                        autoDecision.AttemptNumber,
+                        autoDecision.PreviousWindowHandle
                     });
 
                     if (autoDecision.ShouldAttempt)
                     {
+                        if (autoDecision.AttemptNumber == 2)
+                        {
+                            _log.Write("move_followup", "same-game-process-window-correction", new
+                            {
+                                stablePlan.AppId,
+                                stablePlan.WindowProcessId,
+                                autoDecision.PreviousWindowHandle,
+                                newWindowHandle = stablePlan.WindowHandle,
+                                autoDecision.Reason,
+                                _steamEvidence.SessionNumber
+                            });
+                        }
+
                         GameWindowMoveResult result =
                             GameWindowMover.Attempt(
                                 stablePlan, snapshot, _log, autoDecision.AttemptNumber);
                         if (result.Attempted)
                         {
+                            bool immediateOnTarget =
+                                result.ApiSucceeded &&
+                                result.After is Rectangle afterRect &&
+                                result.Requested is Rectangle targetRect &&
+                                targetRect.Contains(
+                                    afterRect.X + afterRect.Width / 2,
+                                    afterRect.Y + afterRect.Height / 2) &&
+                                string.Equals(result.AfterDisplay,
+                                    result.TargetDisplay, StringComparison.OrdinalIgnoreCase);
+
+                            if (autoDecision.AttemptNumber == 1)
+                            {
+                                bool recognized = _autoMovePolicy.ConfirmImmediateMove(
+                                    result.WindowHandle, result.ProcessId,
+                                    result.AppId ?? 0L, _steamEvidence.SessionNumber,
+                                    result.AttemptNumber, immediateOnTarget);
+                                _log.Write("move_immediate_confirmation", "steam-game-post-win32", new
+                                {
+                                    result.AppId,
+                                    result.ProcessId,
+                                    result.WindowHandle,
+                                    result.AttemptNumber,
+                                    result.ApiSucceeded,
+                                    immediateOnTarget,
+                                    policyAccepted = recognized,
+                                    method = "Win32 result and post-call window-center observation"
+                                });
+                            }
+
                             _pendingMoveVerification = result;
                             _lastMoveAttemptUtc = DateTimeOffset.UtcNow;
                             _verificationCount = 0;
@@ -368,6 +411,14 @@ internal sealed class ObserverContext : ApplicationContext
             result = window is null ? "window-not-observed" :
                 onVirtual ? "on-virtual-target" :
                 onSource ? "remained-or-returned-to-physical" : "other-display",
+            samePidReplacementWindows = window is null
+                ? snapshot.Windows.Where(w => w.ProcessId == attempt.ProcessId)
+                    .Select(w => new
+                    {
+                        w.WindowHandle, w.DeviceName,
+                        w.X, w.Y, w.Width, w.Height
+                    }).ToArray()
+                : [],
             actualDisplay = window?.DeviceName,
             actualRect = window is null ? null :
                 new { window.X, window.Y, window.Width, window.Height },
