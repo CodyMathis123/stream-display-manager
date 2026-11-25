@@ -170,6 +170,25 @@ void VerifySteam(string name, bool passed)
         failures++;
 }
 
+// Regression from the MSI-observer trace: a display change after a
+// confirmed Desktop must not reopen the old disconnect.
+void VerifyStableDesktop(string name, SessionDecision actual, SessionPhase expected)
+{
+    bool pass = actual.NextPhase == expected && !actual.MayPlanWindowMoves;
+    Console.WriteLine($"{(pass ? "PASS" : "FAIL")} {name}");
+    if (!pass) failures++;
+}
+VerifyStableDesktop("Old end marker does not re-enter Disconnecting",
+    SessionReducer.Evaluate(SessionPhase.Desktop,
+        new SessionEvidence(true, false, false, SessionEndConfirmed: true, TargetDisplayStable: false),
+        false),
+    SessionPhase.Desktop);
+VerifyStableDesktop("New virtual candidate cannot reuse old stream end",
+    SessionReducer.Evaluate(SessionPhase.Desktop,
+        new SessionEvidence(true, true, false, SessionEndConfirmed: true, TargetDisplayStable: false),
+        false),
+    SessionPhase.Candidate);
+
 // The host's Encoding complete marker precedes virtual-display removal.
 void VerifyDisconnect(string name, SessionDecision decision, SessionPhase expected)
 {
@@ -249,5 +268,5 @@ VerifySteam("Session reducer requires corroborating display evidence",
     !SessionReducer.Evaluate(SessionPhase.Candidate,
         new SessionEvidence(true, false, steamState.IsActive), false).MayPlanWindowMoves);
 
-Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 4 - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 4} total checks passed");
+Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6} total checks passed");
 return failures == 0 ? 0 : 1;

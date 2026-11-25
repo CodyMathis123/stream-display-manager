@@ -20,6 +20,16 @@ public static class SessionReducer
         // real physical desktop is stable.
         if (evidence.SessionEndConfirmed)
         {
+            // The previous session's end marker can remain latched while a
+            // new virtual monitor begins attaching. Once Desktop is stable,
+            // don't re-enter Disconnecting until another stream is confirmed.
+            if (previous == SessionPhase.Desktop)
+                return evidence.VirtualDisplayPresent
+                    ? new SessionDecision(SessionPhase.Candidate, false,
+                        "Virtual candidate requires a fresh Steam start.")
+                    : new SessionDecision(SessionPhase.Desktop, false,
+                        "Previous stream ended; no new stream confirmed.");
+
             if (evidence.VirtualDisplayPresent || !evidence.TargetDisplayStable)
                 return new SessionDecision(SessionPhase.Disconnecting, false,
                     "Steam completed; waiting for physical desktop to stabilize.");
