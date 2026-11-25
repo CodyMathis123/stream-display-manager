@@ -9,6 +9,7 @@ namespace StreamDisplayManager.App;
 internal sealed class ObserverContext : ApplicationContext
 {
     private readonly NotifyIcon _tray;
+    private readonly Icon _appIcon;
     private readonly System.Windows.Forms.Timer _scanTimer;
     private readonly MessageWindow _messageWindow;
     private readonly JsonLog _log;
@@ -65,15 +66,17 @@ internal sealed class ObserverContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitThread());
 
+        _appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath)
+            ?? (Icon)SystemIcons.Application.Clone();
         _tray = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = _appIcon,
             Text = "Stream Display Manager (observe only)",
             ContextMenuStrip = menu,
             Visible = true
         };
 
-        _messageWindow = new MessageWindow(reason => Capture(reason));
+        _messageWindow = new MessageWindow(reason => Capture(reason), () => ExitThread());
 
         _scanTimer = new System.Windows.Forms.Timer { Interval = 3000 };
         _scanTimer.Tick += (_, _) => Capture("poll");
@@ -264,6 +267,7 @@ internal sealed class ObserverContext : ApplicationContext
         _tray.Visible = false;
         _tray.ContextMenuStrip?.Dispose();
         _tray.Dispose();
+        _appIcon.Dispose();
 
         base.ExitThreadCore();
     }
@@ -271,10 +275,12 @@ internal sealed class ObserverContext : ApplicationContext
     private sealed class MessageWindow : NativeWindow
     {
         private readonly Action<string> _notify;
+        private readonly Action _close;
 
-        public MessageWindow(Action<string> notify)
+        public MessageWindow(Action<string> notify, Action close)
         {
             _notify = notify;
+            _close = close;
             CreateHandle(new CreateParams { Caption = "StreamDisplayManagerObserver" });
         }
 
@@ -283,6 +289,9 @@ internal sealed class ObserverContext : ApplicationContext
             // Signals initiate a fresh census, not a trusted state transition.
             switch (m.Msg)
             {
+                case 0x0010: // WM_CLOSE (graceful MSI upgrade/uninstall)
+                    _close();
+                    return;
                 case 0x007E: // WM_DISPLAYCHANGE
                     _notify("WM_DISPLAYCHANGE");
                     break;

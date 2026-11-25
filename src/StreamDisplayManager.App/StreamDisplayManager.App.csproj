@@ -7,7 +7,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\StreamDisplayManager.ico</ApplicationIcon>
   </PropertyGroup>
+  <Target Name="GenerateStreamDisplayManagerIcon" BeforeTargets="PrepareForBuild">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\Generate-StreamDisplayManagerIcon.ps1&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\Assets\StreamDisplayManager.ico&quot;" />
+  </Target>
   <ItemGroup>
     <ProjectReference Include="../StreamDisplayManager.Core/StreamDisplayManager.Core.csproj" />
   </ItemGroup>
