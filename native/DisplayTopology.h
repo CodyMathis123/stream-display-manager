@@ -11,12 +11,9 @@
 #include <cwchar>
 #include <cwctype>
 #include "SessionPolicy.h"
+#include "CcdCandidate.h"
 
 namespace sdm {
-struct Ccd {
-    std::vector<DISPLAYCONFIG_PATH_INFO> paths;
-    std::vector<DISPLAYCONFIG_MODE_INFO> modes;
-};
 inline LONG ReadCcd(Ccd& result) {
     for (int attempt=0; attempt<5; ++attempt) {
         UINT32 pc=0, mc=0;
@@ -171,59 +168,148 @@ inline bool Restore(const std::filesystem::path& journal) {
     if(!recovered) return false; // Preserve the journal for another attempt.
     return DeleteFileW(journal.c_str())!=FALSE;
 }
+// Diagnostics describe which CCD step failed, without serializing adapter
+// LUIDs, monitor identifiers, or the raw Windows display journal.
+struct SwitchDiagnostics {
+    const char* stage="precondition";
+    const char* modePlan="explicit";
+    LONG explicitValidateError=ERROR_SUCCESS;
+    LONG fallbackValidateError=ERROR_SUCCESS;
+    LONG sourceX=0,sourceY=0;
+    UINT32 sourceWidth=0,sourceHeight=0;
+    UINT32 beforePaths=0,beforeModes=0,candidateModes=0;
+    bool virtualAware=false;
+    bool journalWritten=false;
+};
+
+// Construct and validate before making ANY display mutations. The explicit
+// candidate preserves current source dimensions (notably docked 4K), moves
+// the source to (0,0), and remaps referenced mode indexes. If Windows rejects
+// it, try a single Windows-selected-modes candidate in SDC_VALIDATE only;
+// applying that fallback is still gated by journal + verification/rollback.
+inline LONG ValidatedVirtualCandidate(const Ccd& before,
+                                      const std::wstring& virtualName,
+                                      Ccd& only,SwitchDiagnostics& diag) {
+    diag.beforePaths=static_cast<UINT32>(before.paths.size());
+    diag.beforeModes=static_cast<UINT32>(before.modes.size());
+    size_t found=before.paths.size();
+    for(size_t i=0;i<before.paths.size();++i) {
+        if(SourceName(before.paths[i].sourceInfo)!=virtualName)continue;
+        if(found!=before.paths.size()) {
+            diag.stage="ambiguous-ccd-source";
+            return ERROR_INVALID_DATA;
+        }
+        found=i;
+    }
+    if(found==before.paths.size() || before.paths.size()<2) {
+        diag.stage="missing-ccd-source";
+        return ERROR_INVALID_DATA;
+    }
+    CcdCandidateInfo info{};
+    diag.stage="build-explicit";
+    LONG result=BuildIsolatedCandidate(before,found,false,only,info);
+    if(result)return result;
+    diag.sourceX=info.sourceX;
+    diag.sourceY=info.sourceY;
+    diag.sourceWidth=info.width;
+    diag.sourceHeight=info.height;
+    diag.virtualAware=info.virtualAware;
+    diag.candidateModes=info.outputModes;
+
+    constexpr UINT32 flags=SDC_USE_SUPPLIED_DISPLAY_CONFIG|
+        SDC_ALLOW_CHANGES|SDC_VIRTUAL_MODE_AWARE;
+    diag.stage="validate-explicit";
+    result=SetDisplayConfig(static_cast<UINT32>(only.paths.size()),only.paths.data(),
+        static_cast<UINT32>(only.modes.size()),only.modes.data(),flags|SDC_VALIDATE);
+    diag.explicitValidateError=result;
+    if(!result)return ERROR_SUCCESS;
+
+    // The explicit modes were rejected. Ask Windows to select viable modes
+    // only after a separate validation; retain the failed error for diagnosis.
+    Ccd relaxed;
+    CcdCandidateInfo relaxedInfo{};
+    diag.stage="build-auto";
+    result=BuildIsolatedCandidate(before,found,true,relaxed,relaxedInfo);
+    if(result)return result;
+    diag.stage="validate-auto";
+    result=SetDisplayConfig(static_cast<UINT32>(relaxed.paths.size()),
+        relaxed.paths.data(),0,nullptr,flags|SDC_VALIDATE);
+    diag.fallbackValidateError=result;
+    if(result)return result;
+    diag.modePlan="automatic";
+    diag.candidateModes=0;
+    only=std::move(relaxed);
+    return ERROR_SUCCESS;
+}
+
 // Re-isolation must never replace the pre-stream journal with a drifted
-// two-display snapshot. It only changes the ACTIVE paths for the current
-// confirmed session and leaves the original restore data untouched.
+// two-display snapshot. It only changes ACTIVE paths for the current stream.
 inline LONG RepairVirtualOnly(const std::filesystem::path& journal) {
-    if(!std::filesystem::exists(journal)) return ERROR_FILE_NOT_FOUND;
+    if(!std::filesystem::exists(journal))return ERROR_FILE_NOT_FOUND;
     auto screens=Screens();
     if(!HasPhysical(screens) ||
        std::count_if(screens.begin(),screens.end(),
-           [](const Screen& s){return s.isVirtual;})!=1) return ERROR_INVALID_DATA;
+           [](const Screen& s){return s.isVirtual;})!=1)return ERROR_INVALID_DATA;
     const auto it=std::find_if(screens.begin(),screens.end(),
         [](const Screen& s){return s.isVirtual;});
     Ccd current;
     LONG result=ReadCcd(current);
-    if(result) return result;
-    Ccd only=current;
-    only.paths.erase(std::remove_if(only.paths.begin(),only.paths.end(),
-        [&](const DISPLAYCONFIG_PATH_INFO& p){return SourceName(p.sourceInfo)!=it->name;}),
-        only.paths.end());
-    if(only.paths.size()!=1 || current.paths.size()<2) return ERROR_INVALID_DATA;
-    const UINT32 flags=SDC_USE_SUPPLIED_DISPLAY_CONFIG|SDC_ALLOW_CHANGES|SDC_VIRTUAL_MODE_AWARE;
+    if(result)return result;
+    Ccd only;
+    SwitchDiagnostics diag;
+    result=ValidatedVirtualCandidate(current,it->name,only,diag);
+    if(result)return result;
+    constexpr UINT32 flags=SDC_USE_SUPPLIED_DISPLAY_CONFIG|
+        SDC_ALLOW_CHANGES|SDC_VIRTUAL_MODE_AWARE;
     result=SetDisplayConfig(static_cast<UINT32>(only.paths.size()),only.paths.data(),
-               static_cast<UINT32>(only.modes.size()),only.modes.data(),flags|SDC_VALIDATE);
-    if(result) return result;
-    result=SetDisplayConfig(static_cast<UINT32>(only.paths.size()),only.paths.data(),
-               static_cast<UINT32>(only.modes.size()),only.modes.data(),flags|SDC_APPLY);
-    return result ? result : (VirtualOnly(Screens()) ? ERROR_SUCCESS : ERROR_INVALID_STATE);
+        static_cast<UINT32>(only.modes.size()),
+        only.modes.empty()?nullptr:only.modes.data(),flags|SDC_APPLY);
+    return result?result:(VirtualOnly(Screens())?ERROR_SUCCESS:ERROR_INVALID_STATE);
 }
-inline LONG SwitchVirtualOnly(const std::filesystem::path& journal) {
-    if(std::filesystem::exists(journal)) return ERROR_ALREADY_EXISTS;
+inline LONG SwitchVirtualOnly(const std::filesystem::path& journal,
+                              SwitchDiagnostics* provided=nullptr) {
+    SwitchDiagnostics local{};
+    auto& diag=provided?*provided:local;
+    diag={};
+    if(std::filesystem::exists(journal)){
+        diag.stage="journal-already-present";
+        return ERROR_ALREADY_EXISTS;
+    }
     auto screens=Screens();
     if(!HasPhysical(screens) ||
-       std::count_if(screens.begin(),screens.end(),[](const Screen& s){return s.isVirtual;})!=1)
+       std::count_if(screens.begin(),screens.end(),
+           [](const Screen& s){return s.isVirtual;})!=1) {
+        diag.stage="precondition";
         return ERROR_INVALID_DATA;
-    const auto it=std::find_if(screens.begin(),screens.end(),[](const Screen& s){return s.isVirtual;});
-    Ccd before;
-    LONG result=ReadCcd(before);
-    if(result) return result;
-    Ccd only=before;
-    only.paths.erase(std::remove_if(only.paths.begin(),only.paths.end(),
-        [&](const DISPLAYCONFIG_PATH_INFO& p){return SourceName(p.sourceInfo)!=it->name;}),
-        only.paths.end());
-    if(only.paths.size()!=1 || before.paths.size()<2) return ERROR_INVALID_DATA;
-    const UINT32 flags=SDC_USE_SUPPLIED_DISPLAY_CONFIG|SDC_ALLOW_CHANGES|SDC_VIRTUAL_MODE_AWARE;
-    result=SetDisplayConfig(static_cast<UINT32>(only.paths.size()),only.paths.data(),
-               static_cast<UINT32>(only.modes.size()),only.modes.data(),flags|SDC_VALIDATE);
-    if(result) return result;
-    if(!WriteJournal(journal,before)) return ERROR_WRITE_FAULT;
-    result=SetDisplayConfig(static_cast<UINT32>(only.paths.size()),only.paths.data(),
-               static_cast<UINT32>(only.modes.size()),only.modes.data(),flags|SDC_APPLY);
-    if(result || !VirtualOnly(Screens())) {
-        Restore(journal);
-        return result ? result : ERROR_INVALID_STATE;
     }
+    const auto it=std::find_if(screens.begin(),screens.end(),
+        [](const Screen& s){return s.isVirtual;});
+    Ccd before;
+    diag.stage="read-ccd";
+    LONG result=ReadCcd(before);
+    if(result)return result;
+    Ccd only;
+    result=ValidatedVirtualCandidate(before,it->name,only,diag);
+    if(result)return result;
+    diag.stage="write-journal";
+    if(!WriteJournal(journal,before))return ERROR_WRITE_FAULT;
+    diag.journalWritten=true;
+    constexpr UINT32 flags=SDC_USE_SUPPLIED_DISPLAY_CONFIG|
+        SDC_ALLOW_CHANGES|SDC_VIRTUAL_MODE_AWARE;
+    diag.stage="apply";
+    result=SetDisplayConfig(static_cast<UINT32>(only.paths.size()),only.paths.data(),
+        static_cast<UINT32>(only.modes.size()),
+        only.modes.empty()?nullptr:only.modes.data(),flags|SDC_APPLY);
+    if(result){
+        Restore(journal);  // Never leave an unverified virtual-only desktop.
+        return result;
+    }
+    diag.stage="verify";
+    if(!VirtualOnly(Screens())){
+        Restore(journal);
+        return ERROR_INVALID_STATE;
+    }
+    diag.stage="verified";
     return ERROR_SUCCESS;
 }
 inline bool EmergencyExtend() {
