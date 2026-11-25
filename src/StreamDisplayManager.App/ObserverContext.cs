@@ -93,7 +93,7 @@ internal sealed class ObserverContext : ApplicationContext
         {
             mode = "doom-auto-experimental",
             experimentalAutoMoveAppId = ExperimentalAutoMovePolicy.EnabledAppId,
-            oneAttemptPerSession = true,
+            maxAttemptsPerSession = ExperimentalAutoMovePolicy.MaxAttemptsPerSession,
             schema = 1,
             logDirectory
         });
@@ -200,7 +200,7 @@ internal sealed class ObserverContext : ApplicationContext
             VerifyPendingMove(snapshot);
 
             // Phase 2C experiment: planner stays pure. Only DOOM can invoke
-            // one Win32 move, after a confirmed stream and stable wrong-target
+            // at most two Win32 moves, after a confirmed stream and stable wrong-target
             // assessment. All other games remain diagnostic-only.
             if (_sessionPhase == SessionPhase.Streaming && stable &&
                 _steamEvidence.IsActive && snapshot.SteamRunning)
@@ -247,13 +247,15 @@ internal sealed class ObserverContext : ApplicationContext
                         identityConfidence = "provisional-process-rule",
                         executorEnabled = experimentalExecutor,
                         autoMoveReason = autoDecision.Reason,
-                        autoDecision.ShouldAttempt
+                        autoDecision.ShouldAttempt,
+                        autoDecision.AttemptNumber
                     });
 
                     if (autoDecision.ShouldAttempt)
                     {
                         ExperimentalMoveResult result =
-                            ExperimentalDoomMover.Attempt(stablePlan, snapshot, _log);
+                            ExperimentalDoomMover.Attempt(
+                                stablePlan, snapshot, _log, autoDecision.AttemptNumber);
                         if (result.Attempted)
                         {
                             _pendingMoveVerification = result;
@@ -330,6 +332,7 @@ internal sealed class ObserverContext : ApplicationContext
             attempt.WindowHandle,
             attempt.ProcessId,
             attempt.ApiSucceeded,
+            attempt.AttemptNumber,
             attempt.TargetDisplay,
             elapsedMs = (long)elapsed.TotalMilliseconds,
             checkNumber = _verificationCount + 1,
@@ -343,6 +346,20 @@ internal sealed class ObserverContext : ApplicationContext
         });
 
         _verificationCount++;
+        if (_verificationCount >= 2 && !sessionEnded && onVirtual &&
+            attempt.ApiSucceeded)
+        {
+            bool confirmed = _autoMovePolicy.ConfirmOwnedMove(
+                attempt.WindowHandle, _steamEvidence.SessionNumber, attempt.AttemptNumber);
+            _log.Write("move_owned_confirmation", "doom-verified-on-target", new
+            {
+                attempt.AttemptNumber,
+                attempt.WindowHandle,
+                attempt.ProcessId,
+                confirmed,
+                result = confirmed ? "owned-move-verified" : "stale-move-not-confirmed"
+            });
+        }
         if (_verificationCount >= 2 || sessionEnded || window is null)
             _pendingMoveVerification = null;
     }
