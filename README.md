@@ -44,3 +44,13 @@ Because temporary display changes are not saved in Windows' display database, a 
 - Compiler: MSVC x64, C++20, /O2 /MT /W4. Installer: WiX 5.
 
 Start at [docs/INDEX.md](docs/INDEX.md) for the code map, [AGENTS.md](AGENTS.md) for agent/developer constraints, [docs/DECISIONS.md](docs/DECISIONS.md) for tradeoffs, [docs/FINDINGS.md](docs/FINDINGS.md) for validated observations, and [docs/RELEASING.md](docs/RELEASING.md) for manual Production releases. See [docs/NATIVE.md](docs/NATIVE.md) for operational details. Review device metadata in logs before sharing.
+
+## Diagnostics and support
+
+Right-click the tray and select **Open diagnostics folder** to view bounded,
+daily JSONL event files, or **Export diagnostics...** to create a recent,
+human-readable session summary and JSONL event export for troubleshooting.
+The output is user-local; there is no Windows Event Log registration, network
+upload, monitoring service or per-game directory. Exported events can include
+Steam App IDs and display/device descriptions; inspect the file before sharing.
+See [native diagnostic details](docs/NATIVE.md#local-diagnostics-no-windows-event-log-integration).
