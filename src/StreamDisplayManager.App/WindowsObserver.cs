@@ -56,7 +56,8 @@ internal static class WindowsObserver
 
             adapters.Add(new DisplayAdapterObservation(
                 deviceName, description, deviceId,
-                device.StateFlags, candidate));
+                device.StateFlags, candidate,
+                (device.StateFlags & 0x00000001u) != 0));
         }
 
         return adapters.OrderBy(a => a.DeviceName, StringComparer.Ordinal).ToArray();
@@ -193,7 +194,7 @@ internal sealed record ScreenObservation(
 
 internal sealed record DisplayAdapterObservation(
     string DeviceName, string Description, string DeviceId,
-    uint StateFlags, bool IsSudoVdaCandidate);
+    uint StateFlags, bool IsSudoVdaCandidate, bool IsAttachedToDesktop);
 
 internal sealed record WindowObservation(
     string WindowHandle, uint ProcessId, string ProcessName, string DeviceName,
