@@ -17,7 +17,8 @@ settings.local.json
 Thumbs.db
 
 # Generated icon and MSI outputs
-src/StreamDisplayManager.App/Assets/*.ico
+native/Assets/*.ico
 dist/
+native-output/
 installer-output/
 release-output/
