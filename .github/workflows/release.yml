@@ -2,6 +2,8 @@ name: Publish verified Windows MSI release
 
 on:
   workflow_dispatch:
+  push:
+    branches: [Production]
 
 permissions:
   contents: write
@@ -9,9 +11,11 @@ permissions:
 
 jobs:
   release:
-    if: github.ref == 'refs/heads/Production'
+    # A deliberate release commit is an alternative to manual dispatch.
+    # Other Production pushes never publish a release.
+    if: github.ref == 'refs/heads/Production' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[publish-release]'))
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Select successful Production CI for this exact commit
@@ -23,9 +27,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          response="$(gh api "repos/$REPO/actions/workflows/native-ci.yml/runs?branch=Production&status=success&per_page=100")"
-          run="$(jq -r --arg sha "$HEAD_SHA" \
-            '[.workflow_runs[] | select(.head_sha == $sha and .event == "push" and .conclusion == "success")] | first | .id // empty' <<< "$response")"
+          # Production build and release workflows may start at the same time.
+          # Wait for this exact commit's native CI result; fail closed if it
+          # fails, is cancelled, or remains unverified.
+          run=""
+          for attempt in $(seq 1 60); do
+            response="$(gh api "repos/$REPO/actions/workflows/native-ci.yml/runs?branch=Production&per_page=100")"
+            run="$(jq -r --arg sha "$HEAD_SHA" \
+              '[.workflow_runs[] | select(.head_sha == $sha and .event == "push" and .conclusion == "success")] | first | .id // empty' <<< "$response")"
+            if [[ -n "$run" ]]; then break; fi
+            state="$(jq -r --arg sha "$HEAD_SHA" \
+              '[.workflow_runs[] | select(.head_sha == $sha and .event == "push")] | first | .conclusion // empty' <<< "$response")"
+            if [[ "$state" == "failure" || "$state" == "cancelled" || "$state" == "timed_out" ]]; then
+              echo "Production CI did not pass for $HEAD_SHA ($state)" >&2
+              exit 1
+            fi
+            echo "Waiting for verified Production CI (attempt $attempt/60)"
+            sleep 10
+          done
           if [[ -z "$run" ]]; then
             echo "No successful Production push CI run for $HEAD_SHA" >&2
             exit 1
