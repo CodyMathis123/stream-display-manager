@@ -14,7 +14,8 @@
                            Target="StreamDisplayManager.App.exe"
                            CloseMessage="yes"
                            EndSessionMessage="yes"
-                           PromptToContinue="yes"
+                           PromptToContinue="no"
+                           RebootPrompt="no"
                            Timeout="10"
                            TerminateProcess="0" />
     <Icon Id="StreamDisplayManagerIcon.ico" SourceFile="$(var.IconPath)" />
