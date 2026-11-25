@@ -16,7 +16,7 @@ function Read-MsiProperty([string]$Name) {
         $view.Execute()
         $row = $view.Fetch()
         if ($null -eq $row) { return $null }
-        return $row.StringData(1)
+        return ($row.StringData(1)).Trim()
     }
     finally { $view.Close() }
 }
