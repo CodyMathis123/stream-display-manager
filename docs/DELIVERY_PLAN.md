@@ -48,7 +48,7 @@ Build a minimal .NET Windows tray/observer application:
 
 - When the Steam session and SudoVDA target are both confirmed and stable, a DOOM window on the physical monitor triggers one automatic Win32 `SetWindowPos` move to the live virtual monitor's bounds.
 - Enabled for **DOOM: The Dark Ages only** (App ID 3017860). Starfield and RDR2 remain read-only, and the observer never changes monitor topology or Steam settings.
-- Maximum two attempts per stream session: initial auto-move, then one follow-up only if the first move was verified on SudoVDA before the same game window returned to the physical display. A game originally launched on SudoVDA is left alone if moved afterward. No third attempt.
+- Maximum two attempts per stream session: initial auto-move, then one follow-up only if the first move was verified on SudoVDA before the same game window returned to the physical display. A game previously seen on SudoVDA is eligible for correction if it later appears on the physical monitor, regardless of whether that change was intentional. No third attempt.
 - Before moving, revalidate HWND, PID, exact process name, live source and target displays and geometry. Preserve Z order and foreground activation.
 - Log `placement_plan`, numbered `move_attempt`, `move_result` (including Win32 error and before/after rectangles), later `move_verification`, and `move_owned_confirmation` before permitting a follow-up. `move_suppressed` / `move_skipped` provide reasons.
 - This is an **experiment**, not a production-safe general mover. It has no crash-safe restore journal, Win32 movement may be ignored by DOOM's fullscreen renderer, and game-owned display selection may override the window coordinates. Test on a machine where the physical display remains accessible.

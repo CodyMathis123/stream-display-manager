@@ -415,8 +415,8 @@ VerifyAutoMove("DOOM new session can try once again",
     movePolicy.Observe(doomWrongPlan, 2).ShouldAttempt);
 VerifyAutoMove("Correctly placed DOOM needs no move",
     !movePolicy.Observe(doomCorrectPlan, 3).ShouldAttempt);
-VerifyAutoMove("Moving correctly placed game away respects user intent",
-    movePolicy.Observe(doomWrongPlan, 3).Suppressed);
+VerifyAutoMove("Previously correct game moved away gets initial correction",
+    movePolicy.Observe(doomWrongPlan, 3).AttemptNumber == 1);
 VerifyAutoMove("Starfield remains read-only",
     !movePolicy.Observe(candidatePlan, 4).ShouldAttempt);
 VerifyAutoMove("RDR2 remains read-only",
@@ -455,7 +455,14 @@ VerifyAutoMove("Fresh stream has its own two-attempt budget",
 var userRelocationPolicy = new ExperimentalAutoMovePolicy();
 VerifyAutoMove("A correctly launched DOOM window remains untouched",
     !userRelocationPolicy.Observe(doomCorrectPlan, 302).ShouldAttempt);
-VerifyAutoMove("User moves an initially correct window: don't chase",
+VerifyAutoMove("DOOM off SudoVDA is eligible even when previously on target",
+    userRelocationPolicy.Observe(doomWrongPlan, 302).AttemptNumber == 1);
+VerifyAutoMove("Formerly on-target DOOM still needs verified first move for retry",
+    userRelocationPolicy.Observe(doomWrongPlan, 302).Suppressed);
+VerifyAutoMove("Formerly on-target DOOM can have one verified follow-up",
+    userRelocationPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 302, 1) &&
+    userRelocationPolicy.Observe(doomWrongPlan, 302).AttemptNumber == 2);
+VerifyAutoMove("No third attempt after formerly on-target DOOM is moved",
     userRelocationPolicy.Observe(doomWrongPlan, 302).Suppressed);
 var hwndChangePolicy = new ExperimentalAutoMovePolicy();
 VerifyAutoMove("Do not retry a different HWND after owned first move",

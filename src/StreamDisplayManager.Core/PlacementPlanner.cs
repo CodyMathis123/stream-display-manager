@@ -184,8 +184,6 @@ public sealed class ExperimentalAutoMovePolicy
     private int _attempts;
     private string? _ownedWindow;
     private bool _firstMoveVerified;
-    private readonly HashSet<string> _initiallyOnTarget =
-        new(StringComparer.OrdinalIgnoreCase);
 
     public AutoMoveDecision Observe(PlacementPlan plan, long sessionNumber)
     {
@@ -198,7 +196,6 @@ public sealed class ExperimentalAutoMovePolicy
             _attempts = 0;
             _ownedWindow = null;
             _firstMoveVerified = false;
-            _initiallyOnTarget.Clear();
         }
 
         if (string.IsNullOrWhiteSpace(plan.WindowHandle))
@@ -206,22 +203,13 @@ public sealed class ExperimentalAutoMovePolicy
 
         string handle = plan.WindowHandle;
         if (plan.Status == PlacementStatus.AlreadyOnTarget)
-        {
-            if (_attempts == 0)
-                _initiallyOnTarget.Add(handle);
-            return new(false, _attempts == 0
-                ? "Originally on SudoVDA; respect later relocation."
-                : "DOOM is on SudoVDA after our move.");
-        }
+            return new(false, "DOOM is currently on SudoVDA; no move needed.");
 
         if (plan.Status != PlacementStatus.WouldMove)
             return new(false, "No valid misplaced game window.");
 
         if (_attempts == 0)
         {
-            if (_initiallyOnTarget.Contains(handle))
-                return new(false, "Initially correctly placed; respect user relocation.", true);
-
             _attempts = 1;
             _ownedWindow = handle;
             return new(true, "Initial DOOM wrong-monitor placement.", false, 1);
