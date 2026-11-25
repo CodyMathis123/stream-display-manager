@@ -91,7 +91,7 @@ jobs:
           }
           $files = @(Read-MsiRows 'SELECT FileName FROM File')
           $registryNames = @(Read-MsiRows 'SELECT Name FROM Registry')
-          if ($files -notmatch 'StreamDisplayManager.Native.exe') {
+          if (-not (@($files | Where-Object { $_ -match 'StreamDisplayManager.Native.exe' }).Count -gt 0)) {
             throw 'MSI does not contain native EXE'
           }
           if ($registryNames -notcontains 'StreamDisplayManagerNative') {
