@@ -10,6 +10,8 @@
 #include "../native/SteamTail.h"
 #include "../native/Diagnostics.h"
 #include "../native/CcdCandidate.h"
+#include "../native/DisplayStrategy.h"
+#include "../native/VirtualPrimaryCandidate.h"
 
 #define CHECK(expr) do { if(!(expr)) { std::cerr << "FAIL " << __LINE__ << ": " #expr "\n"; return 1; } } while(0)
 
@@ -40,7 +42,7 @@ int PolicyTests() {
     CHECK(p.Decide(e)==Action::None);
 
     // Drift is repaired at most twice in a session with a 15s cooldown.
-    e.physicalPresent=true;e.stable=true;
+    e.physicalPresent=true;e.stable=true;e.needsRepair=true;
     CHECK(p.Decide(e)==Action::Repair);
     e.now=31999;
     CHECK(p.Decide(e)==Action::None);
@@ -52,7 +54,7 @@ int PolicyTests() {
     // Fresh session starts a new bounded drift budget.
     e.session=3;
     CHECK(p.Decide(e)==Action::Repair);
-    e.physicalPresent=false;
+    e.physicalPresent=false;e.needsRepair=false;
     CHECK(p.Decide(e)==Action::None);
 
     // Safety: lost target/Steam/log evidence restores without waiting for grace.
@@ -66,7 +68,7 @@ int PolicyTests() {
     CHECK(p.Decide(e)==Action::Restore);
 
     // After a completed restore, new explicit stream start is necessary.
-    e.hasJournal=false;e.enabled=true;e.physicalPresent=true;e.virtualPresent=true;
+    e.hasJournal=false;e.enabled=true;e.physicalPresent=true;e.virtualPresent=true;e.needsRepair=false;
     e.streamActive=false;
     CHECK(p.Decide(e)==Action::None);
     e.streamActive=true;e.session=4;
@@ -340,8 +342,101 @@ int CandidateTests() {
     return 0;
 }
 
+
+int StrategyTests() {
+    using namespace sdm;
+    CHECK(ParseStrategy("disabled")==DisplayStrategy::Disabled);
+    CHECK(ParseStrategy("observe")==DisplayStrategy::Observe);
+    CHECK(ParseStrategy("virtual-move")==DisplayStrategy::MoveToVirtual);
+    CHECK(ParseStrategy("virtual-primary")==DisplayStrategy::VirtualPrimary);
+    CHECK(ParseStrategy("virtual-only")==DisplayStrategy::VirtualOnly);
+    CHECK(ParseStrategy("bad-value")==DisplayStrategy::Observe);
+    CHECK(IsTopologyStrategy(DisplayStrategy::VirtualPrimary));
+    CHECK(IsTopologyStrategy(DisplayStrategy::VirtualOnly));
+    CHECK(!IsTopologyStrategy(DisplayStrategy::Disabled));
+    CHECK(!IsTopologyStrategy(DisplayStrategy::Observe));
+    CHECK(!IsTopologyStrategy(DisplayStrategy::MoveToVirtual));
+    return 0;
+}
+int VirtualPrimaryTests() {
+    using namespace sdm;
+    Ccd before;before.paths.resize(2);before.modes.resize(4);
+    const LUID physical{11,1},virtualAdapter{22,2};
+    auto& physicalPath=before.paths[0];
+    physicalPath.flags=DISPLAYCONFIG_PATH_ACTIVE|DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE;
+    physicalPath.sourceInfo.adapterId=physical;
+    physicalPath.sourceInfo.id=0;
+    physicalPath.sourceInfo.sourceModeInfoIdx=0;
+    physicalPath.targetInfo.adapterId=physical;
+    physicalPath.targetInfo.id=0;
+    physicalPath.targetInfo.targetModeInfoIdx=1;
+    auto& virtualPath=before.paths[1];
+    virtualPath.flags=DISPLAYCONFIG_PATH_ACTIVE|DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE;
+    virtualPath.sourceInfo.adapterId=virtualAdapter;
+    virtualPath.sourceInfo.id=1;
+    virtualPath.sourceInfo.sourceModeInfoIdx=2;
+    virtualPath.targetInfo.adapterId=virtualAdapter;
+    virtualPath.targetInfo.id=1;
+    virtualPath.targetInfo.targetModeInfoIdx=3;
+    auto setSource=[&](size_t index,LUID adapter,UINT32 id,
+                       LONG x,LONG y,UINT32 w,UINT32 h){
+        auto& m=before.modes[index];
+        m.infoType=DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
+        m.adapterId=adapter;m.id=id;
+        m.sourceMode.position={x,y};
+        m.sourceMode.width=w;m.sourceMode.height=h;
+    };
+    setSource(0,physical,0,0,0,3440,1440);
+    setSource(2,virtualAdapter,1,3440,0,3840,2160);
+    before.modes[1].infoType=DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
+    before.modes[1].adapterId=physical;before.modes[1].id=0;
+    before.modes[3].infoType=DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
+    before.modes[3].adapterId=virtualAdapter;before.modes[3].id=1;
+    Ccd primary;VirtualPrimaryCandidateInfo info{};
+    CHECK(BuildVirtualPrimaryCandidate(before,1,primary,info)==ERROR_SUCCESS);
+    CHECK(primary.paths.size()==2 && primary.modes.size()==4);
+    CHECK(primary.modes[2].sourceMode.position.x==0);
+    CHECK(primary.modes[2].sourceMode.position.y==0);
+    CHECK(primary.modes[0].sourceMode.position.x==3840);
+    CHECK(primary.modes[0].sourceMode.position.y==0);
+    CHECK(primary.modes[2].sourceMode.width==3840);
+    CHECK(primary.modes[2].sourceMode.height==2160);
+    CHECK(primary.paths[0].sourceInfo.sourceModeInfoIdx==0);
+    CHECK(primary.paths[1].sourceInfo.sourceModeInfoIdx==2);
+    CHECK(info.virtualSourceX==3440 && info.virtualSourceY==0);
+    CHECK(info.physicalWidth==3440 && info.virtualWidth==3840);
+    CHECK(before.modes[0].sourceMode.position.x==0);
+    CHECK(before.modes[2].sourceMode.position.x==3440); // journal untouched
+
+    Ccd invalid=before;
+    invalid.paths[1].sourceInfo.sourceModeInfoIdx=999;
+    CHECK(BuildVirtualPrimaryCandidate(invalid,1,primary,info)==ERROR_INVALID_DATA);
+    invalid=before;
+    invalid.modes[2].id=88;
+    CHECK(BuildVirtualPrimaryCandidate(invalid,1,primary,info)==ERROR_INVALID_DATA);
+    invalid=before;
+    invalid.paths[1].sourceInfo.sourceModeInfoIdx=0;
+    CHECK(BuildVirtualPrimaryCandidate(invalid,1,primary,info)==ERROR_INVALID_DATA);
+    invalid=before;invalid.paths.resize(1);
+    CHECK(BuildVirtualPrimaryCandidate(invalid,0,primary,info)==ERROR_INVALID_DATA);
+
+    // Bounded repairs must be governed by the active mode's drift signal.
+    SessionPolicy policy;
+    Evidence evidence{};
+    evidence.enabled=true;evidence.steamRunning=true;evidence.streamActive=true;
+    evidence.virtualPresent=true;evidence.physicalPresent=true;
+    evidence.stable=true;evidence.hasJournal=true;evidence.session=9;
+    CHECK(policy.Decide(evidence)==Action::None); // both displays healthy
+    evidence.needsRepair=true;
+    CHECK(policy.Decide(evidence)==Action::Repair);
+    evidence.needsRepair=false;
+    CHECK(policy.Decide(evidence)==Action::None);
+    return 0;
+}
+
 int main() {
-    if(PolicyTests()!=0 || RestoreFallbackTests()!=0 || TailTests()!=0 || DiagnosticTests()!=0 || CandidateTests()!=0)return 1;
-    std::cout<<"Native reliability, Steam tail, diagnostic rotation and CCD candidate tests passed\n";
+    if(PolicyTests()!=0 || RestoreFallbackTests()!=0 || TailTests()!=0 || DiagnosticTests()!=0 || CandidateTests()!=0 ||
+       StrategyTests()!=0 || VirtualPrimaryTests()!=0)return 1;
+    std::cout<<"Native reliability, Steam tail, diagnostic rotation, CCD and strategy tests passed\n";
     return 0;
 }
