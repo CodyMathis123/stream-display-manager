@@ -11,7 +11,9 @@ public static class PlacementPlanner
     // proof. An eventual executor must require stronger identity validation.
     private static readonly Dictionary<long, string> ObservedGameRules = new()
     {
-        [1716740] = "Starfield"
+        [1716740] = "Starfield",
+        [1174180] = "RDR2",
+        [3017860] = "DOOMTheDarkAges"
     };
 
     public static PlacementPlan Evaluate(PlacementObservation observation)
