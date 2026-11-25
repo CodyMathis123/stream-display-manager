@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cwchar>
 #include <cwctype>
+#include "SessionPolicy.h"
 
 namespace sdm {
 struct Ccd {
@@ -151,23 +152,23 @@ inline bool Restore(const std::filesystem::path& journal) {
         return DeleteFileW(journal.c_str())!=FALSE;
     }
     Ccd saved;
-    if(!ReadJournal(journal,saved)) {
-        LONG result=SetDisplayConfig(0,nullptr,0,nullptr,SDC_APPLY|SDC_USE_DATABASE_CURRENT);
-        if(result!=ERROR_SUCCESS || !HasPhysical(Screens())) return false;
-        return DeleteFileW(journal.c_str())!=FALSE;
-    }
-    LONG result=SetDisplayConfig(static_cast<UINT32>(saved.paths.size()),saved.paths.data(),
-                      static_cast<UINT32>(saved.modes.size()),saved.modes.data(),
-                      SDC_APPLY|SDC_USE_SUPPLIED_DISPLAY_CONFIG|SDC_ALLOW_CHANGES|
-                      SDC_VIRTUAL_MODE_AWARE);
-    if(result!=ERROR_SUCCESS || !HasPhysical(Screens())) {
-        // Steam can replace its CCD target while disconnecting. If the saved
-        // path is stale, fall back to the last configuration Windows persisted.
-        // Do not save our streaming topology to the display database.
-        result=SetDisplayConfig(0,nullptr,0,nullptr,
-                                SDC_APPLY|SDC_USE_DATABASE_CURRENT);
-    }
-    if(result!=ERROR_SUCCESS || !HasPhysical(Screens())) return false;
+    const bool hasSaved=ReadJournal(journal,saved);
+    bool recovered=RestoreWithFallback(
+        [&]() {
+            if(!hasSaved) return false;
+            return SetDisplayConfig(static_cast<UINT32>(saved.paths.size()),saved.paths.data(),
+                static_cast<UINT32>(saved.modes.size()),saved.modes.data(),
+                SDC_APPLY|SDC_USE_SUPPLIED_DISPLAY_CONFIG|SDC_ALLOW_CHANGES|
+                SDC_VIRTUAL_MODE_AWARE)==ERROR_SUCCESS;
+        },
+        [&]() {
+            // Apply the persisted Windows configuration; never save streaming
+            // topology into the display database.
+            return SetDisplayConfig(0,nullptr,0,nullptr,
+                SDC_APPLY|SDC_USE_DATABASE_CURRENT)==ERROR_SUCCESS;
+        },
+        [&]() { return HasPhysical(Screens()); });
+    if(!recovered) return false; // Preserve the journal for another attempt.
     return DeleteFileW(journal.c_str())!=FALSE;
 }
 // Re-isolation must never replace the pre-stream journal with a drifted
