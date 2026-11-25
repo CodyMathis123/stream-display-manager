@@ -4,7 +4,10 @@ Stream Display Manager is a small Windows x64 C++20 tray application. The only s
 
 ## Implementation
 
-- Win32 Shell_NotifyIcon, message-only window, per-user singleton mutex. Tray About dialog shows the app version read from Windows VERSIONINFO in the running executable.
+Native code is separated into four responsibilities rather than one large tray source: `StreamDisplayManager.cpp` owns Windows message dispatch and the Tick orchestration; `SteamObserver.{h,cpp}` owns host log signals and process checks; `AppRuntime.{h,cpp}` owns local settings, Windows startup, JSONL and mode diagnostics, plus About/version information; `DisplayTopology.h` and the pure `SessionPolicy.h` own CCD recovery and decision policy respectively. No additional service, managed runtime or third-party runtime was introduced.
+
+
+- Win32 Shell_NotifyIcon, **hidden top-level window** (not message-only, so MSI can send WM_CLOSE), and per-user singleton mutex. Tray About dialog shows the app version read from Windows VERSIONINFO in the running executable.
 - Steam host log (streaming_log.txt) opened at EOF; explicit start/end markers, no historical replay.
 - QueryDisplayConfig and SetDisplayConfig switch active Windows paths to the sole SudoVDA output when a live stream is confirmed. The switch is not persisted in the Windows display database.
 - Saved CCD configuration is stored as a versioned binary journal before mutation. Normal session end and startup recovery restore the physical desktop; the journal is cleared when Steam/Windows already restored it.
@@ -36,7 +39,7 @@ next Windows sign-in. The MSI also closes the tray during uninstall; uninstall
 does not relaunch it.
 
 The Windows CI pipeline inspects close/launch MSI action scheduling and smoke
-tests a real silent install and uninstall while a native tray is running.
+tests a real silent install and uninstall while a native tray is running. Its lifecycle smoke test also checks for the app's own `native-stopped` event to establish a graceful exit.
 
 ## Validation
 
@@ -45,7 +48,7 @@ tests a real silent install and uninstall while a native tray is running.
 - Native Windows CI measured a 9.43 MiB working set and 1.61 MiB private bytes at idle; actual desktop observation was approximately 2 MB in Task Manager. These are different metrics and environments.
 - During handheld streaming, SudoVDA advertised 3840x2160@60 and @120 even while 1280x800 was active.
 - Docked Steam Deck validation has not yet been performed.
-- Test the canonical installer startup/uninstall behavior on the host before a stable release.
+- User reported interactive install and ordinary tray behavior working; actual fresh-login behavior and docked 4K remain to be verified if needed.
 
 ## Small reliability policy
 
