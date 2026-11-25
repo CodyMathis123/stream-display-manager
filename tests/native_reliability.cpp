@@ -208,6 +208,7 @@ int DiagnosticTests() {
         }
     }
     CHECK(count==3 && sawWarning);
+    log.close(); // Windows cannot reliably remove a file held by ifstream.
     CHECK(fs::exists(legacy));
 
     // Retention removes expired dated segments and leaves legacy history
