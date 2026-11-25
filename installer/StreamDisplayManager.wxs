@@ -1,13 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="Stream Display Manager"
            Manufacturer="CodyMathis"
            Version="$(var.StreamDisplayManagerVersion)"
            Scope="perUser"
            UpgradeCode="9850E424-36AF-424A-B3EA-FA8DAD29E174">
     <SummaryInformation Description="Native Win32 Stream Display Manager" />
-    <MajorUpgrade DowngradeErrorMessage="A newer Stream Display Manager version is already installed." />
+    <MajorUpgrade Schedule="afterInstallExecute" DowngradeErrorMessage="A newer Stream Display Manager version is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <!-- The tray exposes a hidden top-level window so WM_CLOSE is handled by
+         WM_DESTROY, which restores the desktop before replacement. Older
+         message-only tray builds cannot receive WiX's WM_CLOSE; after 15 s,
+         terminate that legacy process so the upgrade can proceed. The saved
+         recovery journal is still honored by the new app on startup. -->
+    <util:CloseApplication Id="CloseRunningTray"
+                           Target="StreamDisplayManager.Native.exe"
+                           CloseMessage="yes"
+                           Timeout="15"
+                           TerminateProcess="1"
+                           RebootPrompt="no" />
+    <!-- Launch the new binary only after a successful interactive install.
+         The HKCU Run entry below remains responsible for subsequent logins. -->
+    <SetProperty Id="WixUnelevatedShellExecTarget"
+                 Value="[#NativeExe]"
+                 Before="LaunchInstalledTray"
+                 Sequence="execute" />
+    <CustomAction Id="LaunchInstalledTray"
+                  BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+                  DllEntry="WixUnelevatedShellExec"
+                  Execute="immediate"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="override Wix4CloseApplications_$(sys.BUILDARCHSHORT)"
+              After="InstallInitialize" />
+      <Custom Action="LaunchInstalledTray"
+              After="InstallFinalize"
+              Condition="NOT (REMOVE~=&quot;ALL&quot;) AND UILevel &gt; 2" />
+    </InstallExecuteSequence>
     <Property Id="ARPCOMMENTS" Value="Native Win32 tray. Starts at login; configurable in tray menu." />
     <Icon Id="NativeIcon.ico" SourceFile="$(var.IconPath)" />
     <StandardDirectory Id="LocalAppDataFolder">

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cwchar>
 #include <cwctype>
+#include "SessionPolicy.h"
 
 namespace sdm {
 struct Ccd {
@@ -151,14 +152,51 @@ inline bool Restore(const std::filesystem::path& journal) {
         return DeleteFileW(journal.c_str())!=FALSE;
     }
     Ccd saved;
-    if(!ReadJournal(journal,saved)) return false;
-    LONG result=SetDisplayConfig(static_cast<UINT32>(saved.paths.size()),saved.paths.data(),
-                      static_cast<UINT32>(saved.modes.size()),saved.modes.data(),
-                      SDC_APPLY|SDC_USE_SUPPLIED_DISPLAY_CONFIG|SDC_ALLOW_CHANGES|
-                      SDC_VIRTUAL_MODE_AWARE);
-    if(result!=ERROR_SUCCESS) return false;
-    if(!HasPhysical(Screens())) return false;
+    const bool hasSaved=ReadJournal(journal,saved);
+    bool recovered=RestoreWithFallback(
+        [&]() {
+            if(!hasSaved) return false;
+            return SetDisplayConfig(static_cast<UINT32>(saved.paths.size()),saved.paths.data(),
+                static_cast<UINT32>(saved.modes.size()),saved.modes.data(),
+                SDC_APPLY|SDC_USE_SUPPLIED_DISPLAY_CONFIG|SDC_ALLOW_CHANGES|
+                SDC_VIRTUAL_MODE_AWARE)==ERROR_SUCCESS;
+        },
+        [&]() {
+            // Apply the persisted Windows configuration; never save streaming
+            // topology into the display database.
+            return SetDisplayConfig(0,nullptr,0,nullptr,
+                SDC_APPLY|SDC_USE_DATABASE_CURRENT)==ERROR_SUCCESS;
+        },
+        [&]() { return HasPhysical(Screens()); });
+    if(!recovered) return false; // Preserve the journal for another attempt.
     return DeleteFileW(journal.c_str())!=FALSE;
+}
+// Re-isolation must never replace the pre-stream journal with a drifted
+// two-display snapshot. It only changes the ACTIVE paths for the current
+// confirmed session and leaves the original restore data untouched.
+inline LONG RepairVirtualOnly(const std::filesystem::path& journal) {
+    if(!std::filesystem::exists(journal)) return ERROR_FILE_NOT_FOUND;
+    auto screens=Screens();
+    if(!HasPhysical(screens) ||
+       std::count_if(screens.begin(),screens.end(),
+           [](const Screen& s){return s.isVirtual;})!=1) return ERROR_INVALID_DATA;
+    const auto it=std::find_if(screens.begin(),screens.end(),
+        [](const Screen& s){return s.isVirtual;});
+    Ccd current;
+    LONG result=ReadCcd(current);
+    if(result) return result;
+    Ccd only=current;
+    only.paths.erase(std::remove_if(only.paths.begin(),only.paths.end(),
+        [&](const DISPLAYCONFIG_PATH_INFO& p){return SourceName(p.sourceInfo)!=it->name;}),
+        only.paths.end());
+    if(only.paths.size()!=1 || current.paths.size()<2) return ERROR_INVALID_DATA;
+    const UINT32 flags=SDC_USE_SUPPLIED_DISPLAY_CONFIG|SDC_ALLOW_CHANGES|SDC_VIRTUAL_MODE_AWARE;
+    result=SetDisplayConfig(static_cast<UINT32>(only.paths.size()),only.paths.data(),
+               static_cast<UINT32>(only.modes.size()),only.modes.data(),flags|SDC_VALIDATE);
+    if(result) return result;
+    result=SetDisplayConfig(static_cast<UINT32>(only.paths.size()),only.paths.data(),
+               static_cast<UINT32>(only.modes.size()),only.modes.data(),flags|SDC_APPLY);
+    return result ? result : (VirtualOnly(Screens()) ? ERROR_SUCCESS : ERROR_INVALID_STATE);
 }
 inline LONG SwitchVirtualOnly(const std::filesystem::path& journal) {
     if(std::filesystem::exists(journal)) return ERROR_ALREADY_EXISTS;

@@ -16,30 +16,32 @@
 #include <cstdint>
 #include <cstdio>
 #include <tlhelp32.h>
+#include <winver.h>
 #include "DisplayTopology.h"
+#include "SessionPolicy.h"
+#include "SteamTail.h"
 #pragma comment(lib,"user32.lib")
 #pragma comment(lib,"shell32.lib")
 #pragma comment(lib,"advapi32.lib")
+#pragma comment(lib,"version.lib")
 
 namespace {
 constexpr UINT kTrayMessage=WM_APP+20;
 constexpr UINT_PTR kPollTimer=1;
-constexpr UINT kToggle=1001,kRestore=1002,kModes=1003,kLogs=1004,kExit=1005,kStartup=1006;
+constexpr UINT kToggle=1001,kRestore=1002,kModes=1003,kLogs=1004,kExit=1005,kStartup=1006,kAbout=1007;
 HWND hwnd=nullptr;
 NOTIFYICONDATAW icon{};
 std::filesystem::path root,logdir,journal,settings,steamlog;
-bool enabled=false,attached=false,streamActive=false,endObserved=false,ownsTopology=false;
-bool lastVirtual=false;
+bool enabled=false,streamActive=false,endObserved=false;
+sdm::SessionPolicy sessionPolicy;
+sdm::SteamTail steamTail;
 int stableCount=0;
 long long session=0,appId=0;
-std::uintmax_t logPosition=0;
-std::string partial;
 std::wstring oldTopology;
 std::wstring lastModesSignature;
 bool missingLogReported=false;
 constexpr wchar_t kRunKey[]=L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kNativeRunName[]=L"StreamDisplayManagerNative";
-long long lastAttemptSession=-1;
 
 std::string Utf8(const std::wstring& value) {
     if(value.empty()) return {};
@@ -154,17 +156,6 @@ std::filesystem::path SteamLogPath() {
     if(result!=ERROR_SUCCESS || (type!=REG_SZ && type!=REG_EXPAND_SZ))return {};
     return std::filesystem::path(path)/L"logs"/L"streaming_log.txt";
 }
-void InitSteamTail() {
-    steamlog=SteamLogPath();
-    if(steamlog.empty() || !std::filesystem::exists(steamlog)) {
-        Log("steam_log_source","unavailable");return;
-    }
-    try {
-        logPosition=std::filesystem::file_size(steamlog);
-        attached=true;
-        Log("steam_log_source","attached","\"historyRead\":false");
-    }catch(...){Log("steam_log_source","unavailable");}
-}
 void ParseSignal(const std::string& line) {
     if(line.empty() || line[0]!='[') return;
     auto end=line.find("] ");
@@ -190,48 +181,26 @@ void ParseSignal(const std::string& line) {
     }
 }
 void PollSteam() {
-    if(!attached){
-        if(!missingLogReported){Log("steam_log_source","missing");missingLogReported=true;}
-        return;
+    if(steamlog.empty() || !steamTail.Attached())
+        steamlog=SteamLogPath(); // Steam may install/start after tray login.
+    const bool wasAttached=steamTail.Attached();
+    auto batch=steamTail.Poll(steamlog,[](const std::string& line){ParseSignal(line);});
+    if(batch.status==sdm::TailStatus::Unavailable) {
+        // An absent source cannot authorize keeping the physical monitor off.
+        streamActive=false;endObserved=false;appId=0;
+        if(wasAttached) Log("steam_log_gap",batch.reason);
+        else if(!missingLogReported) Log("steam_log_source","unavailable");
+        missingLogReported=true;
+    } else if(batch.status==sdm::TailStatus::Attached) {
+        // Always start from EOF after restart/reappearance, never old events.
+        streamActive=false;endObserved=false;appId=0;
+        missingLogReported=false;
+        Log("steam_log_source",batch.reason,"\"historyRead\":false");
+    } else if(batch.status==sdm::TailStatus::Gap) {
+        streamActive=false;endObserved=false;appId=0;
+        missingLogReported=false;
+        Log("steam_log_gap",batch.reason);
     }
-    HANDLE file=CreateFileW(steamlog.c_str(),GENERIC_READ,
-        FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
-        nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
-    if(file==INVALID_HANDLE_VALUE){
-        streamActive=false;endObserved=false;Log("steam_log_gap","missing");return;
-    }
-    LARGE_INTEGER size{};
-    if(!GetFileSizeEx(file,&size)){CloseHandle(file);return;}
-    if(static_cast<std::uintmax_t>(size.QuadPart)<logPosition ||
-       static_cast<std::uintmax_t>(size.QuadPart)-logPosition>256*1024){
-        logPosition=static_cast<std::uintmax_t>(size.QuadPart);
-        partial.clear();streamActive=false;endObserved=false;
-        Log("steam_log_gap","truncated-or-read-limit");
-        CloseHandle(file);return;
-    }
-    DWORD remaining=static_cast<DWORD>(static_cast<std::uintmax_t>(size.QuadPart)-logPosition);
-    if(remaining>0) {
-        LARGE_INTEGER pos{};pos.QuadPart=static_cast<LONGLONG>(logPosition);
-        if(SetFilePointerEx(file,pos,nullptr,FILE_BEGIN)) {
-            std::string data(remaining,'\0');
-            DWORD count=0;
-            if(ReadFile(file,data.data(),remaining,&count,nullptr)){
-                logPosition+=count;
-                data.resize(count);
-                partial+=data;
-                size_t next=0;
-                while((next=partial.find('\n'))!=std::string::npos){
-                    ParseSignal(partial.substr(0,next));
-                    partial.erase(0,next+1);
-                }
-                if(partial.size()>16384) {
-                    partial.clear();streamActive=false;endObserved=false;
-                    Log("steam_log_gap","oversize-line");
-                }
-            }
-        }
-    }
-    CloseHandle(file);
 }
 bool SteamRunning() {
     HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
@@ -279,39 +248,83 @@ void CaptureModes(const std::vector<sdm::Screen>& screens,const char* reason) {
 void Tick() {
     PollSteam();
     auto screens=sdm::Screens();
-    std::wstring signature=Signature(screens);
-    if(signature!=oldTopology){oldTopology=signature;stableCount=1;
+    const std::wstring signature=Signature(screens);
+    if(signature!=oldTopology) {
+        oldTopology=signature;
+        stableCount=1;
         Log("topology","changed","\"screens\":"+std::to_string(screens.size()));
-    }else if(stableCount<3)++stableCount;
-    if(signature!=lastModesSignature){
+    } else if(stableCount<3) ++stableCount;
+    if(signature!=lastModesSignature) {
         lastModesSignature=signature;
         CaptureModes(sdm::Screens(true),"topology-change");
     }
     const bool virtualPresent=std::any_of(screens.begin(),screens.end(),
         [](const sdm::Screen& s){return s.isVirtual;});
-    const bool active=enabled && streamActive && !endObserved && virtualPresent &&
-        sdm::HasPhysical(screens) && stableCount>=2 && SteamRunning();
-    if(std::filesystem::exists(journal)){
-        if(!enabled || !streamActive || endObserved || !virtualPresent) {
-            bool restored=sdm::Restore(journal);
-            if(restored) {
-                ownsTopology=false;
-                Log("display_restore","session-ended-or-virtual-detached");
-            }else Log("display_restore","pending-retry");
-        }
-    }else if(active && !ownsTopology && lastAttemptSession!=session){
-        lastAttemptSession=session;
+    const bool hasJournal=std::filesystem::exists(journal);
+    const sdm::Evidence evidence{
+        enabled, SteamRunning(), streamActive, endObserved, virtualPresent,
+        sdm::HasPhysical(screens), stableCount>=2, hasJournal,
+        static_cast<std::uint64_t>(session), GetTickCount64()
+    };
+    const auto action=sessionPolicy.Decide(evidence);
+    switch(action) {
+    case sdm::Action::Restore:
+        if(sdm::Restore(journal)) {
+            sessionPolicy.OnRecovery();
+            Log("display_restore","session-ended-or-target-lost");
+        } else Log("display_restore","pending-retry");
+        break;
+    case sdm::Action::Switch: {
         LONG status=sdm::SwitchVirtualOnly(journal);
         if(status==ERROR_SUCCESS) {
-            ownsTopology=true;
             Log("display_switch","virtual-only-active",
                 "\"session\":"+std::to_string(session));
             CaptureModes(sdm::Screens(true),"virtual-only");
-        }else{
-            Log("display_switch","failed","\"win32Error\":"+std::to_string(status));
-        }
+        } else Log("display_switch","failed","\"win32Error\":"+std::to_string(status));
+        break;
+    }
+    case sdm::Action::Repair: {
+        LONG status=sdm::RepairVirtualOnly(journal);
+        Log("display_repair",status==ERROR_SUCCESS ? "re-isolated" : "failed",
+            "\"win32Error\":"+std::to_string(status));
+        break;
+    }
+    case sdm::Action::None:
+        break;
     }
 }
+std::wstring InstalledFileVersion() {
+    wchar_t path[32768]{};
+    DWORD length=GetModuleFileNameW(nullptr,path,32768);
+    if(!length || length>=32768) return L"Unknown";
+    DWORD ignored=0;
+    DWORD size=GetFileVersionInfoSizeW(path,&ignored);
+    if(!size) return L"Unknown";
+    std::vector<BYTE> info(size);
+    if(!GetFileVersionInfoW(path,0,size,info.data())) return L"Unknown";
+    VS_FIXEDFILEINFO* fixed=nullptr;
+    UINT bytes=0;
+    if(!VerQueryValueW(info.data(),L"\\",reinterpret_cast<LPVOID*>(&fixed),&bytes) ||
+       !fixed || bytes<sizeof(VS_FIXEDFILEINFO) || fixed->dwSignature!=0xFEEF04BD)
+        return L"Unknown";
+    std::wstring result=std::to_wstring(HIWORD(fixed->dwFileVersionMS))+L"."+
+        std::to_wstring(LOWORD(fixed->dwFileVersionMS))+L"."+
+        std::to_wstring(HIWORD(fixed->dwFileVersionLS));
+    WORD revision=LOWORD(fixed->dwFileVersionLS);
+    if(revision) result+=L"."+std::to_wstring(revision);
+    return result;
+}
+void ShowAbout(HWND owner) {
+    const std::wstring message=
+        L"Stream Display Manager\n"
+        L"Version "+InstalledFileVersion()+L"\n\n"
+        L"A lightweight native Windows companion for Steam Remote Play.\n"
+        L"Uses SudoVDA during streaming and restores the physical desktop afterward.\n\n"
+        L"https://github.com/CodyMathis123/stream-display-manager";
+    MessageBoxW(owner,message.c_str(),L"About Stream Display Manager",
+                MB_OK|MB_ICONINFORMATION);
+}
+
 void OpenLogFolder() {
     ShellExecuteW(hwnd,L"open",logdir.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
 }
@@ -324,6 +337,7 @@ void Menu() {
     AppendMenuW(menu,MF_STRING,kLogs,L"Open diagnostics folder");
     AppendMenuW(menu,MF_STRING|(StartupEnabled()?MF_CHECKED:0),kStartup,L"Start with Windows");
     AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+    AppendMenuW(menu,MF_STRING,kAbout,L"About Stream Display Manager...");
     AppendMenuW(menu,MF_STRING,kExit,L"Exit");
     POINT p{};GetCursorPos(&p);SetForegroundWindow(hwnd);
     TrackPopupMenu(menu,TPM_RIGHTBUTTON|TPM_BOTTOMALIGN,p.x,p.y,0,hwnd,nullptr);
@@ -362,6 +376,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
                     L"Stream Display Manager",MB_OK|MB_ICONERROR);
             }
             break;
+        case kAbout: ShowAbout(w);break;
         case kExit: DestroyWindow(w);break;
         }return 0;
     case WM_CLOSE:DestroyWindow(w);return 0;
@@ -408,15 +423,17 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int){
         if(sdm::Restore(journal))Log("display_restore","startup-recovery");
         else Log("display_restore","startup-recovery-pending");
     }
-    InitSteamTail();
     WNDCLASSW wc{};
     wc.hInstance=instance;
     wc.lpfnWndProc=WindowProc;
     wc.lpszClassName=L"StreamDisplayManager.Native";
     wc.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101));
     if(!RegisterClassW(&wc)){CloseHandle(singleton);return 2;}
+    // Hidden top-level window (never shown): unlike HWND_MESSAGE, Windows
+    // Installer's close-app helper can find it and send WM_CLOSE. WM_DESTROY
+    // already restores display topology and removes the tray icon.
     hwnd=CreateWindowExW(0,wc.lpszClassName,L"Stream Display Manager",
-        0,0,0,0,0,HWND_MESSAGE,nullptr,instance,nullptr);
+        WS_OVERLAPPED,0,0,0,0,nullptr,nullptr,instance,nullptr);
     if(!hwnd){CloseHandle(singleton);return 3;}
     icon.cbSize=sizeof(icon);
     icon.hWnd=hwnd;

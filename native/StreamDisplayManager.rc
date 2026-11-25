@@ -1,1 +1,32 @@
+#include <winver.h>
+#include "VersionInfo.h"
+
 101 ICON "native\\Assets\\StreamDisplayManager.ico"
+
+1 VERSIONINFO
+ FILEVERSION SDM_VERSION_MAJOR,SDM_VERSION_MINOR,SDM_VERSION_BUILD,SDM_VERSION_REVISION
+ PRODUCTVERSION SDM_VERSION_MAJOR,SDM_VERSION_MINOR,SDM_VERSION_BUILD,SDM_VERSION_REVISION
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "CodyMathis\0"
+            VALUE "FileDescription", "Stream Display Manager - Native Steam Remote Play display companion\0"
+            VALUE "FileVersion", SDM_VERSION_TEXT
+            VALUE "InternalName", "StreamDisplayManager.Native\0"
+            VALUE "OriginalFilename", "StreamDisplayManager.Native.exe\0"
+            VALUE "ProductName", "Stream Display Manager\0"
+            VALUE "ProductVersion", SDM_VERSION_TEXT
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
