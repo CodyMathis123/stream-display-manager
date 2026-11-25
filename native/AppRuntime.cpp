@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include "AppRuntime.h"
+#include "Diagnostics.h"
 #pragma comment(lib,"advapi32.lib")
 #pragma comment(lib,"version.lib")
 
@@ -36,18 +37,9 @@ std::string Json(const std::string& s) {
     }
     return out;
 }
-void Log(const std::filesystem::path& logdir,const std::string& type,const std::string& reason,const std::string& details) {
-    std::filesystem::create_directories(logdir);
-    std::ofstream file(logdir/"native-events.jsonl",std::ios::app|std::ios::binary);
-    if(!file) return;
-    SYSTEMTIME now{};GetSystemTime(&now);
-    char at[40]{};
-    sprintf_s(at,"%04hu-%02hu-%02huT%02hu:%02hu:%02hu.%03huZ",
-        now.wYear,now.wMonth,now.wDay,now.wHour,now.wMinute,now.wSecond,now.wMilliseconds);
-    file<<"{\"atUtc\":\""<<at<<"\",\"type\":\""<<Json(type)<<"\",\"reason\":\""
-        <<Json(reason)<<"\"";
-    if(!details.empty())file<<","<<details;
-    file<<"}\n";
+void Log(const std::filesystem::path& logdir,const std::string& type,
+         const std::string& reason,const std::string& details) {
+    AppendDiagnostic(logdir,type,reason,details);
 }
 std::filesystem::path LocalFolder() {
     wchar_t buffer[MAX_PATH]{};
