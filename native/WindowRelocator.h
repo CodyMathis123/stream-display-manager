@@ -58,13 +58,13 @@ public:
         const bool coversMonitor=std::abs(oldWidth-(source.right-source.left))<12 &&
                                  std::abs(oldHeight-(source.bottom-source.top))<12;
         const LONG width=coversMonitor?static_cast<LONG>(mode.dmPelsWidth):
-            std::min(oldWidth,static_cast<LONG>(mode.dmPelsWidth));
+            (oldWidth<static_cast<LONG>(mode.dmPelsWidth)?oldWidth:static_cast<LONG>(mode.dmPelsWidth));
         const LONG height=coversMonitor?static_cast<LONG>(mode.dmPelsHeight):
-            std::min(oldHeight,static_cast<LONG>(mode.dmPelsHeight));
-        const LONG x=mode.dmPosition.x+(coversMonitor?0:
-            std::max<LONG>(0,(static_cast<LONG>(mode.dmPelsWidth)-width)/2));
-        const LONG y=mode.dmPosition.y+(coversMonitor?0:
-            std::max<LONG>(0,(static_cast<LONG>(mode.dmPelsHeight)-height)/2));
+            (oldHeight<static_cast<LONG>(mode.dmPelsHeight)?oldHeight:static_cast<LONG>(mode.dmPelsHeight));
+        const LONG dx=(static_cast<LONG>(mode.dmPelsWidth)-width)/2;
+        const LONG dy=(static_cast<LONG>(mode.dmPelsHeight)-height)/2;
+        const LONG x=mode.dmPosition.x+(coversMonitor?0:(dx>0?dx:0));
+        const LONG y=mode.dmPosition.y+(coversMonitor?0:(dy>0?dy:0));
         if(!SetWindowPos(window,nullptr,x,y,width,height,
             SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOOWNERZORDER)) {
             emit("window_move","set-window-pos-failed",
