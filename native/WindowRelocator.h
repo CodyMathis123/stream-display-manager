@@ -106,7 +106,7 @@ public:
                     if(SetWindowPos(window_,nullptr,original_.left,original_.top,
                          oldWidth,oldHeight,SWP_NOACTIVATE|SWP_NOZORDER|
                          SWP_NOOWNERZORDER))
-                        emit("window_move","restored-original-window");
+                        emit("window_move","restored-original-window","");
                     else emit("window_move","restore-failed",
                             "\"win32Error\":"+std::to_string(GetLastError()));
                 }
