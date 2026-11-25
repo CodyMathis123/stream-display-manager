@@ -30,6 +30,7 @@ internal sealed class ObserverContext : ApplicationContext
     private DateTimeOffset _lastMoveAttemptUtc;
     private int _verificationCount;
     private readonly VirtualOnlyDisplayController _virtualOnly;
+    private readonly DisplayPreferences _preferences;
     private bool _virtualOnlyEnabled;
     private bool _captureBusy;
     private bool _closed;
@@ -43,6 +44,8 @@ internal sealed class ObserverContext : ApplicationContext
         _log = new JsonLog(logDirectory);
         _virtualOnly = new VirtualOnlyDisplayController(_log);
         _virtualOnly.RecoverOnStartup();
+        _preferences = new DisplayPreferences(_log);
+        _virtualOnlyEnabled = _preferences.LoadVirtualOnly();
 
         // Start at EOF: historical Steam sessions are never evidence of a live stream.
         try
@@ -62,11 +65,12 @@ internal sealed class ObserverContext : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add("Capture snapshot", null, (_, _) => Capture("manual"));
         var virtualOnlyItem = new ToolStripMenuItem("Use virtual-only during streaming") {
-            CheckOnClick = true, Checked = false
+            CheckOnClick = true, Checked = _virtualOnlyEnabled
         };
         virtualOnlyItem.CheckedChanged += (_, _) =>
         {
             _virtualOnlyEnabled = virtualOnlyItem.Checked;
+            _preferences.SaveVirtualOnly(_virtualOnlyEnabled);
             _log.Write("display_strategy", _virtualOnlyEnabled ? "virtual-only" : "window-placement", new { });
             if (!_virtualOnlyEnabled)
                 _virtualOnly.Restore("strategy-disabled");
