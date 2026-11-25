@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include <cwctype>
@@ -70,8 +71,17 @@ public:
                 "\"win32Error\":"+std::to_string(GetLastError()));
             return;
         }
+        MONITORINFOEXW resultInfo{};resultInfo.cbSize=sizeof(resultInfo);
+        const HMONITOR resultMonitor=MonitorFromWindow(window,MONITOR_DEFAULTTONULL);
+        if(!resultMonitor || !GetMonitorInfoW(resultMonitor,&resultInfo) ||
+           _wcsicmp(resultInfo.szDevice,target->name.c_str())!=0) {
+            emit("window_move","position-not-confirmed",
+                "\"appId\":"+std::to_string(appId));
+            return;
+        }
         // Move only a single foreground Steam game window per session.
         window_=window;pid_=pid;original_=before;moved_=true;
+        virtualName_=target->name;
         emit("window_move","moved-to-virtual",
             "\"appId\":"+std::to_string(appId)+
             ",\"width\":"+std::to_string(width)+
@@ -83,10 +93,14 @@ public:
         if(moved_ && IsWindow(window_)) {
             DWORD currentPid=0;GetWindowThreadProcessId(window_,&currentPid);
             if(currentPid==pid_) {
+                MONITORINFOEXW currentInfo{};currentInfo.cbSize=sizeof(currentInfo);
+                HMONITOR current=MonitorFromWindow(window_,MONITOR_DEFAULTTONULL);
                 RECT now{};
-                if(GetWindowRect(window_,&now)) {
-                    // Only restore if the user/game has not relocated the window
-                    // again. Do not overwrite a later manual window placement.
+                // If Steam already removed the virtual display, or the user
+                // moved this window elsewhere, never override the placement.
+                if(current && GetMonitorInfoW(current,&currentInfo) &&
+                   _wcsicmp(currentInfo.szDevice,virtualName_.c_str())==0 &&
+                   GetWindowRect(window_,&now)) {
                     const LONG oldWidth=original_.right-original_.left;
                     const LONG oldHeight=original_.bottom-original_.top;
                     if(SetWindowPos(window_,nullptr,original_.left,original_.top,
@@ -98,7 +112,7 @@ public:
                 }
             }
         }
-        moved_=false;window_=nullptr;pid_=0;
+        moved_=false;window_=nullptr;pid_=0;virtualName_.clear();
     }
 private:
     static bool EligibleGameWindow(HWND window) {
@@ -126,6 +140,7 @@ private:
     HWND window_=nullptr;
     DWORD pid_=0;
     RECT original_{};
+    std::wstring virtualName_;
     bool moved_=false,reported_=false;
 };
 } // namespace sdm
