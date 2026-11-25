@@ -341,6 +341,30 @@ VerifyPlacement("Ambiguous virtual targets: hold",
             virtualScreen with { DeviceName = @"\\.\DISPLAY7" } })).Status,
     PlacementStatus.AmbiguousTarget);
 
+// DOOM and RDR2 diagnostic replay from Nov 25 host snapshots.
+var doomPhysicalScreen = physicalScreen with { X = -2560, Width = 2560 };
+var doomPhysicalWindow = new PlacementWindow("1F0B62", 22301, "DOOMTheDarkAges",
+    doomPhysicalScreen.DeviceName, -2560, 0, 2560, 1440, false);
+var doomVirtualWindow = doomPhysicalWindow with {
+    DeviceName = virtualScreen.DeviceName, X = 0, Y = 0, Width = 1280, Height = 800 };
+VerifyPlacement("DOOM physical window would move",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { doomPhysicalWindow },
+        appId: 3017860, screens: new[] { doomPhysicalScreen, virtualScreen })).Status,
+    PlacementStatus.WouldMove);
+VerifyPlacement("DOOM game-selected monitor is virtual",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { doomVirtualWindow },
+        appId: 3017860)).Status, PlacementStatus.AlreadyOnTarget);
+VerifyPlacement("Wrong process never matches DOOM",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow },
+        appId: 3017860)).Status, PlacementStatus.GameWindowNotFound);
+var rdr2Window = deckWindow with { ProcessName = "RDR2", WindowHandle = "6009C4" };
+var rockstarLauncher = desktopWindow with { ProcessName = "SocialClubHelper", WindowHandle = "80A56" };
+VerifyPlacement("RDR2 actual window on SudoVDA",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { rdr2Window, rockstarLauncher },
+        appId: 1174180)).Status, PlacementStatus.AlreadyOnTarget);
+VerifyPlacement("Rockstar launcher is not RDR2",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { rockstarLauncher },
+        appId: 1174180)).Status, PlacementStatus.GameWindowNotFound);
 var candidatePlan = PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow }));
 var noOpPlan = PlacementPlanner.Evaluate(PlacementInput(new[] { deckWindow }));
 var placementStabilizer = new PlacementPlanStabilizer(TimeSpan.FromMilliseconds(750));
