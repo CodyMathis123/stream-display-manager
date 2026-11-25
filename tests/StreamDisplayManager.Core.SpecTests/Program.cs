@@ -294,9 +294,11 @@ var desktopWindow = deckWindow with
 
 PlacementObservation PlacementInput(
     PlacementWindow[] windows, bool confirmed = true, bool stable = true,
-    long? appId = 1716740, PlacementScreen[]? screens = null) =>
+    long? appId = 1716740, PlacementScreen[]? screens = null,
+    IReadOnlyCollection<uint>? steamGameProcessIds = null) =>
     new(confirmed, stable, appId,
-        screens ?? new[] { physicalScreen, virtualScreen }, windows);
+        screens ?? new[] { physicalScreen, virtualScreen }, windows,
+        steamGameProcessIds);
 
 VerifyPlacement("No stream: no placement evaluation",
     PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow }, confirmed: false)).Status,
@@ -313,6 +315,45 @@ VerifyPlacement("Physical-monitor Starfield is a dry-run candidate",
 VerifyPlacement("Unknown Steam App ID cannot claim a game process",
     PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow }, appId: 1234567)).Status,
     PlacementStatus.UnrecognizedGame);
+void VerifyAutoGameIdentity(string name, bool valid)
+{
+    placementChecks++;
+    Console.WriteLine($"{(valid ? "PASS" : "FAIL")} {name}");
+    if (!valid) failures++;
+}
+
+// Game-agnostic fallback: the host has checked this PID's executable lives
+// within the Steam library installation directory for the streamed App ID.
+var unknownGameOnPhysical = desktopWindow with {
+    ProcessName = "AnotherGameExecutable", ProcessId = 4242,
+    WindowHandle = "F00D"
+};
+var unknownGamePlan = PlacementPlanner.Evaluate(PlacementInput(
+    new[] { unknownGameOnPhysical }, appId: 7654321,
+    steamGameProcessIds: new uint[] { 4242 }));
+VerifyPlacement("Steam install PID enables unknown game dry-run placement",
+    unknownGamePlan.Status, PlacementStatus.WouldMove);
+VerifyAutoGameIdentity("Unknown game uses Steam executable path evidence",
+    unknownGamePlan.IdentityEvidence == "steam-app-install-path" &&
+    unknownGamePlan.WindowProcessId == 4242 &&
+    unknownGamePlan.WindowProcessName == "AnotherGameExecutable");
+VerifyPlacement("Unrelated app on same monitor is not the streamed game",
+    PlacementPlanner.Evaluate(PlacementInput(
+        new[] { desktopWindow }, appId: 7654321,
+        steamGameProcessIds: new uint[] { 4242 })).Status,
+    PlacementStatus.GameWindowNotFound);
+VerifyPlacement("Two Steam installation windows cannot be guessed",
+    PlacementPlanner.Evaluate(PlacementInput(
+        new[] { unknownGameOnPhysical, unknownGameOnPhysical with {
+            WindowHandle = "F00E" } }, appId: 7654321,
+        steamGameProcessIds: new uint[] { 4242 })).Status,
+    PlacementStatus.AmbiguousGameWindow);
+VerifyPlacement("Game install evidence not valid without stable stream",
+    PlacementPlanner.Evaluate(PlacementInput(
+        new[] { unknownGameOnPhysical }, appId: 7654321,
+        steamGameProcessIds: new uint[] { 4242 }, confirmed: false)).Status,
+    PlacementStatus.Hold);
+
 VerifyPlacement("No game window: hold",
     PlacementPlanner.Evaluate(PlacementInput([])).Status,
     PlacementStatus.GameWindowNotFound);
@@ -404,7 +445,7 @@ var doomWrongPlan = PlacementPlanner.Evaluate(PlacementInput(
     screens: new[] { doomPhysicalScreen, virtualScreen }));
 var doomCorrectPlan = PlacementPlanner.Evaluate(PlacementInput(
     new[] { doomVirtualWindow }, appId: 3017860));
-var movePolicy = new ExperimentalAutoMovePolicy();
+var movePolicy = new AutomaticPlacementPolicy();
 VerifyAutoMove("No auto move without a real session number",
     !movePolicy.Observe(doomWrongPlan, 0).ShouldAttempt);
 VerifyAutoMove("DOOM first misplaced window authorizes one attempt",
@@ -417,11 +458,16 @@ VerifyAutoMove("Correctly placed DOOM needs no move",
     !movePolicy.Observe(doomCorrectPlan, 3).ShouldAttempt);
 VerifyAutoMove("Previously correct game moved away gets initial correction",
     movePolicy.Observe(doomWrongPlan, 3).AttemptNumber == 1);
-VerifyAutoMove("Starfield remains read-only",
-    !movePolicy.Observe(candidatePlan, 4).ShouldAttempt);
-VerifyAutoMove("RDR2 remains read-only",
+VerifyAutoMove("Starfield now also receives an automatic first correction",
+    movePolicy.Observe(candidatePlan, 4).AttemptNumber == 1);
+VerifyAutoMove("RDR2 already on virtual needs no correction",
     !movePolicy.Observe(PlacementPlanner.Evaluate(PlacementInput(
         new[] { rdr2Window }, appId: 1174180)), 4).ShouldAttempt);
+VerifyAutoMove("RDR2 on physical is handled by the same automatic policy",
+    movePolicy.Observe(PlacementPlanner.Evaluate(PlacementInput(
+        new[] { rdr2Window with { DeviceName = physicalScreen.DeviceName,
+            X = -3440, Width = 3440, Height = 1440 } },
+        appId: 1174180)), 4).AttemptNumber == 1);
 VerifyAutoMove("Unknown/unsafe placement never authorizes native move",
     !movePolicy.Observe(PlacementPlanner.Evaluate(PlacementInput(
         new[] { doomPhysicalWindow with { DeviceName = virtualScreen.DeviceName } },
@@ -430,29 +476,29 @@ VerifyAutoMove("Unknown/unsafe placement never authorizes native move",
 // Regression from DOOM's intro-to-main-menu monitor reset, November 25.
 // DOOM moved by SetWindowPos, stayed on SudoVDA through two observations,
 // then returned to physical 30-36 seconds later in each Steam session.
-var followUpPolicy = new ExperimentalAutoMovePolicy();
+var followUpPolicy = new AutomaticPlacementPolicy();
 AutoMoveDecision initialFollowUp = followUpPolicy.Observe(doomWrongPlan, 300);
 VerifyAutoMove("Initial DOOM placement attempt numbered 1",
     initialFollowUp.ShouldAttempt && initialFollowUp.AttemptNumber == 1);
 VerifyAutoMove("Without confirmed ownership a follow-up is suppressed",
     followUpPolicy.Observe(doomWrongPlan, 300).Suppressed);
 VerifyAutoMove("Wrong HWND/session cannot confirm an app-owned move",
-    !followUpPolicy.ConfirmOwnedMove("OTHER", 300, 1) &&
-    !followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 301, 1));
+    !followUpPolicy.ConfirmOwnedMove("OTHER", doomWrongPlan.WindowProcessId!.Value, doomWrongPlan.AppId!.Value, 300, 1) &&
+    !followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, doomWrongPlan.WindowProcessId!.Value, doomWrongPlan.AppId!.Value, 301, 1));
 VerifyAutoMove("First move may be verified after two on-target observations",
-    followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 300, 1));
+    followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, doomWrongPlan.WindowProcessId!.Value, doomWrongPlan.AppId!.Value, 300, 1));
 AutoMoveDecision secondFollowUp = followUpPolicy.Observe(doomWrongPlan, 300);
 VerifyAutoMove("Verified DOOM reset authorizes follow-up move number 2",
     secondFollowUp.ShouldAttempt && secondFollowUp.AttemptNumber == 2);
 VerifyAutoMove("A third DOOM move is never authorized",
     followUpPolicy.Observe(doomWrongPlan, 300).Suppressed);
 VerifyAutoMove("Old attempt cannot confirm a newer attempt",
-    !followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 300, 1));
+    !followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, doomWrongPlan.WindowProcessId!.Value, doomWrongPlan.AppId!.Value, 300, 1));
 VerifyAutoMove("Second move may also be confirmed",
-    followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 300, 2));
+    followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, doomWrongPlan.WindowProcessId!.Value, doomWrongPlan.AppId!.Value, 300, 2));
 VerifyAutoMove("Fresh stream has its own two-attempt budget",
     followUpPolicy.Observe(doomWrongPlan, 301).AttemptNumber == 1);
-var userRelocationPolicy = new ExperimentalAutoMovePolicy();
+var userRelocationPolicy = new AutomaticPlacementPolicy();
 VerifyAutoMove("A correctly launched DOOM window remains untouched",
     !userRelocationPolicy.Observe(doomCorrectPlan, 302).ShouldAttempt);
 VerifyAutoMove("DOOM off SudoVDA is eligible even when previously on target",
@@ -460,15 +506,28 @@ VerifyAutoMove("DOOM off SudoVDA is eligible even when previously on target",
 VerifyAutoMove("Formerly on-target DOOM still needs verified first move for retry",
     userRelocationPolicy.Observe(doomWrongPlan, 302).Suppressed);
 VerifyAutoMove("Formerly on-target DOOM can have one verified follow-up",
-    userRelocationPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 302, 1) &&
+    userRelocationPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, doomWrongPlan.WindowProcessId!.Value, doomWrongPlan.AppId!.Value, 302, 1) &&
     userRelocationPolicy.Observe(doomWrongPlan, 302).AttemptNumber == 2);
 VerifyAutoMove("No third attempt after formerly on-target DOOM is moved",
     userRelocationPolicy.Observe(doomWrongPlan, 302).Suppressed);
-var hwndChangePolicy = new ExperimentalAutoMovePolicy();
+var hwndChangePolicy = new AutomaticPlacementPolicy();
 VerifyAutoMove("Do not retry a different HWND after owned first move",
     hwndChangePolicy.Observe(doomWrongPlan, 303).ShouldAttempt &&
-    hwndChangePolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 303, 1) &&
+    hwndChangePolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, doomWrongPlan.WindowProcessId!.Value, doomWrongPlan.AppId!.Value, 303, 1) &&
     hwndChangePolicy.Observe(doomWrongPlan with { WindowHandle = "NEW_HANDLE" }, 303).Suppressed);
+var genericPolicy = new AutomaticPlacementPolicy();
+VerifyAutoMove("Unrecognized game with install-path proof gets automatic move",
+    genericPolicy.Observe(unknownGamePlan, 700).AttemptNumber == 1);
+VerifyAutoMove("Unrecognized game without install proof gets no auto move",
+    !genericPolicy.Observe(PlacementPlanner.Evaluate(PlacementInput(
+        new[] { unknownGameOnPhysical }, appId: 999999)), 701).ShouldAttempt);
+VerifyAutoMove("Reusing stream number with a different game resets move budget",
+    genericPolicy.Observe(candidatePlan, 700).AttemptNumber == 1);
+VerifyAutoMove("Verification must match the correct game App ID",
+    !genericPolicy.ConfirmOwnedMove(candidatePlan.WindowHandle!,
+        candidatePlan.WindowProcessId!.Value, 9999L, 700, 1));
+VerifyAutoMove("General policy requires known PID and identity evidence",
+    !genericPolicy.Observe(candidatePlan with { WindowProcessId = null }, 701).ShouldAttempt);
 Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks} total checks passed");
 
 return failures == 0 ? 0 : 1;
