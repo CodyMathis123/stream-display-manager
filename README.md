@@ -23,6 +23,10 @@ Steam owns virtual display creation and streaming; this app orchestrates, observ
 - [Delivery plan](docs/DELIVERY_PLAN.md) – phased scope and acceptance criteria.
 - [Windows and Steam references](docs/REFERENCES.md).
 
+## Windows installer
+
+A branded, self-contained Windows x64 application is packaged as a **per-user WiX 5 MSI** from CI. It installs a Start Menu shortcut and registers user-login startup; it never installs SudoVDA, a service, or kernel drivers. The MSI and icon are generated on Windows CI; see [packaging and smoke tests](docs/PACKAGING.md). Developer MSI builds are unsigned and should be installed only after reviewing CI and smoke-test results.
+
 ## Phase 1 observer
 
 The first implementation targets Windows 10/11 with .NET 10 and runs inside the logged-on interactive user session, rather than as a Windows service. It captures display and game-window observations to local JSONL logs. It does not alter monitor configurations.
