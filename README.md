@@ -2,7 +2,7 @@
 
 A small Windows user-session companion for reliable game streaming across physical and virtual displays.
 
-**Status:** architecture established; Phase 1 read-only observer in progress. This repository does not yet move windows or change display topology.
+**Status:** Phase 2C experimental: automatic one-shot window relocation for DOOM: The Dark Ages during a confirmed Steam/SudoVDA stream. All other games remain read-only. It never changes physical/virtual display topology.
 
 ## Intended experience
 
@@ -14,7 +14,7 @@ A small Windows user-session companion for reliable game streaming across physic
 - Keep the physical display enabled during streaming.
 - Fail safely when Steam, Windows, the virtual driver, or a game behaves unexpectedly.
 
-Steam owns virtual display creation and streaming; this app orchestrates, observes and, in later phases, manages window placement.
+Steam owns virtual display creation and streaming; the app observes Steam/Windows and now experimentally attempts to move only DOOM's game window if it first opens on the physical monitor.
 
 ## Architecture
 
@@ -27,9 +27,16 @@ Steam owns virtual display creation and streaming; this app orchestrates, observ
 
 A branded, self-contained Windows x64 application is packaged as a **per-user WiX 5 MSI** from CI. It installs a Start Menu shortcut and registers user-login startup; it never installs SudoVDA, a service, or kernel drivers. The MSI and icon are generated on Windows CI; see [packaging and smoke tests](docs/PACKAGING.md). Developer MSI builds are unsigned and should be installed only after reviewing CI and smoke-test results.
 
+## Experimental DOOM auto-move (enabled by default in feature MSI)
+
+- A confirmed Steam Deck streaming session, stable SudoVDA display, and matching `DOOMTheDarkAges` window on the physical display cause one `SetWindowPos` attempt to the virtual display's current bounds.
+- No tray action required. No repeated forcing if DOOM rejects the API or you subsequently change its display setting. Starfield and RDR2 remain diagnostics-only.
+- Detailed events: `placement_plan`, `move_attempt`, `move_result`, and delayed `move_verification`; rejected/ignored attempts can be diagnosed from the saved JSONL.
+- **Prototype limitation:** an exclusive-fullscreen game may ignore Win32 placement. A crash-safe restoration journal is not implemented. Keep access to the host's physical monitor and use DOOM's display menu if needed. This build is not a stable release.
+
 ## Phase 1 observer
 
-The first implementation targets Windows 10/11 with .NET 10 and runs inside the logged-on interactive user session, rather than as a Windows service. It captures display and game-window observations to local JSONL logs. It does not alter monitor configurations.
+The first implementation targets Windows 10/11 with .NET 10 and runs inside the logged-on interactive user session, rather than as a Windows service. It captures display and game-window observations to local JSONL logs. It does not alter monitor configurations. DOOM's experimental game-window move is the only mutation in this feature-branch build.
 
 When the Phase 1 app is available, use a Windows machine with .NET 10 SDK:
 
@@ -42,4 +49,4 @@ Logs will be written beneath %LOCALAPPDATA%/StreamDisplayManager/logs. Do not up
 
 ## Contributing
 
-Work on feature branches and use pull requests into Production. Keep unsafe display topology changes behind explicit user opt-in, dry-run verification, and a documented recovery procedure.
+Work on feature branches and use pull requests into Production. Do not change display topology by default. Experiment with window placement only on the designated test game and log all native outcomes.

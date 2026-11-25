@@ -36,7 +36,7 @@ Build a minimal .NET Windows tray/observer application:
 ## Phase 2A/B — Pure placement assessment and dry-run (implemented)
 
 - A pure `PlacementPlanner` accepts stable, active display rectangles, Steam session App ID and observed top-level game windows.
-- Only the observed Starfield diagnostic rule (Steam App ID `1716740`, process name `Starfield`) is available initially. This is **not proof** of process ownership sufficient to authorize actual window mutations.
+- Diagnostic mappings for Starfield (1716740 → Starfield), RDR2 (1174180 → RDR2), and DOOM: The Dark Ages (3017860 → DOOMTheDarkAges); these process-name rules are provisional, not durable ownership proof.
 - Refuse to guess when Steam is unconfirmed, virtual targets are multiple, game windows are ambiguous/minimized/small, or window center and monitor attribution disagree.
 - Assess a game already on the virtual display as `AlreadyOnTarget`; assess a candidate on the physical monitor as `WouldMove`, with `dryRun=true` and `executorEnabled=false`.
 - Debounce the assessment over multiple observations before logging `placement_plan`. Reset after a stream ends.
@@ -44,6 +44,16 @@ Build a minimal .NET Windows tray/observer application:
 
 **Acceptance:** all pure tests and CI pass, and real games produce diagnostic no-op or dry-run results without moving any windows. A future release must not equate a dry-run candidate with permission to move.
 
+## Phase 2C — Automatic DOOM window relocation experiment
+
+- When the Steam session and SudoVDA target are both confirmed and stable, a DOOM window on the physical monitor triggers one automatic Win32 `SetWindowPos` move to the live virtual monitor's bounds.
+- Enabled for **DOOM: The Dark Ages only** (App ID 3017860). Starfield and RDR2 remain read-only, and the observer never changes monitor topology or Steam settings.
+- One attempt per stream session. A window already observed on SudoVDA is not subsequently forced back if the user moves it away.
+- Before moving, revalidate HWND, PID, exact process name, live source and target displays and geometry. Preserve Z order and foreground activation.
+- Log `placement_plan`, `move_attempt`, `move_result` (including Win32 error and before/after rectangles), `move_verification` at later observations, and `move_suppressed` / `move_skipped` reasons.
+- This is an **experiment**, not a production-safe general mover. It has no crash-safe restore journal, Win32 movement may be ignored by DOOM's fullscreen renderer, and game-owned display selection may override the window coordinates. Test on a machine where the physical display remains accessible.
+
+**Acceptance:** on a real DOOM Steam Deck session, observe a single attempt and determine from the logs whether the API was accepted and whether the same HWND reaches and stays on SudoVDA. Do not infer success solely from SetWindowPos returning true.
 ## Phase 3 — Profiles and optional topology changes
 
 - Support docked/handheld/other profiles using actual streamed mode.

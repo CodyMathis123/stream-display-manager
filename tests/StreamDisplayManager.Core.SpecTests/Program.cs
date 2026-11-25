@@ -391,6 +391,41 @@ bool reconnectResets = placementStabilizer.Observe(candidatePlan, tick.AddSecond
 Console.WriteLine($"{(reconnectResets ? "PASS" : "FAIL")} Reconnect resets placement candidate");
 if (!reconnectResets) failures++;
 
+// One-shot DOOM automation policy: never repeatedly force the game window.
+void VerifyAutoMove(string name, bool valid)
+{
+    placementChecks++;
+    Console.WriteLine($"{(valid ? "PASS" : "FAIL")} {name}");
+    if (!valid) failures++;
+}
+
+var doomWrongPlan = PlacementPlanner.Evaluate(PlacementInput(
+    new[] { doomPhysicalWindow }, appId: 3017860,
+    screens: new[] { doomPhysicalScreen, virtualScreen }));
+var doomCorrectPlan = PlacementPlanner.Evaluate(PlacementInput(
+    new[] { doomVirtualWindow }, appId: 3017860));
+var movePolicy = new ExperimentalAutoMovePolicy();
+VerifyAutoMove("No auto move without a real session number",
+    !movePolicy.Observe(doomWrongPlan, 0).ShouldAttempt);
+VerifyAutoMove("DOOM first misplaced window authorizes one attempt",
+    movePolicy.Observe(doomWrongPlan, 1).ShouldAttempt);
+VerifyAutoMove("DOOM repeated scan never retries",
+    !movePolicy.Observe(doomWrongPlan, 1).ShouldAttempt);
+VerifyAutoMove("DOOM new session can try once again",
+    movePolicy.Observe(doomWrongPlan, 2).ShouldAttempt);
+VerifyAutoMove("Correctly placed DOOM needs no move",
+    !movePolicy.Observe(doomCorrectPlan, 3).ShouldAttempt);
+VerifyAutoMove("Moving correctly placed game away respects user intent",
+    movePolicy.Observe(doomWrongPlan, 3).Suppressed);
+VerifyAutoMove("Starfield remains read-only",
+    !movePolicy.Observe(candidatePlan, 4).ShouldAttempt);
+VerifyAutoMove("RDR2 remains read-only",
+    !movePolicy.Observe(PlacementPlanner.Evaluate(PlacementInput(
+        new[] { rdr2Window }, appId: 1174180)), 4).ShouldAttempt);
+VerifyAutoMove("Unknown/unsafe placement never authorizes native move",
+    !movePolicy.Observe(PlacementPlanner.Evaluate(PlacementInput(
+        new[] { doomPhysicalWindow with { DeviceName = virtualScreen.DeviceName } },
+        appId: 3017860, screens: new[] { doomPhysicalScreen, virtualScreen })), 5).ShouldAttempt);
 Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks} total checks passed");
 
 return failures == 0 ? 0 : 1;
