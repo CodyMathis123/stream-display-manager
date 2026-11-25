@@ -63,4 +63,29 @@ try {
 }
 finally { $view.Close() }
 
+
+# Assert the post-install launch is present and gated to interactive first
+# installs/major upgrades, never a quiet CI/deployment install.
+$launchAction = 'LaunchInstalledApp'
+$view = $db.OpenView("SELECT Action, Condition FROM InstallExecuteSequence WHERE Action='$launchAction'")
+try {
+    $view.Execute()
+    $record = $view.Fetch()
+    if ($null -eq $record) { throw 'Missing post-install launch action' }
+    $condition = [string]($record.StringData(2))
+    if ($condition -notmatch '\bNOT\s+Installed\b' -or
+        $condition -notmatch '\bUILevel\s*>=\s*4\b' -or
+        $condition -notmatch '\bLAUNCHAFTERINSTALL\s*=\s*1\b') {
+        throw "Unsafe launch condition: '$condition'"
+    }
+}
+finally { $view.Close() }
+$launchTarget = [string](Read-MsiProperty 'WixShellExecTarget')
+if ($launchTarget -notmatch '\[#MainExe\]') {
+    throw "Post-install launch does not target the installed EXE: '$launchTarget'"
+}
+$launchDefault = [string](Read-MsiProperty 'LAUNCHAFTERINSTALL')
+if ($launchDefault -notmatch '^\s*1\s*
+) { throw 'Launch-after-install default is disabled' }
+
 Write-Host "Validated MSI: $name $actual, per-user, stable upgrade identity."

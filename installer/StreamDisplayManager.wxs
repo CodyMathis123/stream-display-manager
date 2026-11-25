@@ -20,6 +20,22 @@
                            TerminateProcess="0" />
     <Icon Id="StreamDisplayManagerIcon.ico" SourceFile="$(var.IconPath)" />
 
+    <!-- Launch after a successful interactive install (including major upgrades).
+         Silent deployment and repair/uninstall must never open a tray process.
+         LAUNCHAFTERINSTALL=0 permits an explicit opt-out. -->
+    <Property Id="LAUNCHAFTERINSTALL" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#MainExe]" />
+    <CustomAction Id="LaunchInstalledApp"
+                  BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+                  DllEntry="WixShellExec"
+                  Execute="immediate"
+                  Return="ignore"
+                  Impersonate="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="LaunchInstalledApp" After="InstallFinalize"
+              Condition="NOT Installed AND UILevel &gt;= 4 AND LAUNCHAFTERINSTALL = 1" />
+    </InstallExecuteSequence>
+
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="INSTALLFOLDER" Name="StreamDisplayManager">
         <Component Id="MainExecutable" Guid="8EBF0BD8-732F-46C5-B9F5-7B24ED40B2D5">

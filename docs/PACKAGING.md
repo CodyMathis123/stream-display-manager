@@ -7,7 +7,8 @@ This project mirrors proven patterns from [SensorDash](https://github.com/CodyMa
 - Installs a **per-user** tray application under the user's LocalAppData StreamDisplayManager folder.
 - No Windows service, UAC requirement for ordinary use, driver installation, firewall opening, network listener or background privileged process.
 - Steam and SudoVDA are separate prerequisites; installing or uninstalling this MSI must not touch either.
-- Start Menu shortcut, branded executable icon, branded tray icon, HKCU Run entry to start at **next user login**.
+- Start Menu shortcut, branded executable icon, branded tray icon, HKCU Run entry for **future user logins**.
+- **Starts immediately** after a successful interactive MSI installation (including major upgrades). Silent `/qn` installations, maintenance/repair and uninstall do not launch the tray. Set `LAUNCHAFTERINSTALL=0` to opt out. The app's single-instance mutex remains a fallback against duplicate launches.
 - MSI upgrade/uninstall sends a polite close to the tray app and does not forcibly terminate Steam or game processes.
 - Existing logs and settings remain in LocalAppData and should not be deleted by uninstall.
 
@@ -41,7 +42,8 @@ The test installer is **not digitally signed** and not yet published as a public
 
 ## Manual MSI acceptance matrix
 
-- [ ] Clean per-user install without elevation or unrequested driver changes.
+- [ ] Clean per-user interactive install without elevation or unrequested driver changes; tray starts automatically after success.
+- [ ] Silent `msiexec /i Setup.msi /qn` install does not launch a tray process; `LAUNCHAFTERINSTALL=0` also suppresses launch.
 - [ ] EXE, Start Menu, and tray show the same branded icon.
 - [ ] Launching shortcut twice still runs one observer instance.
 - [ ] Login auto-start launches exactly one tray instance.

@@ -30,6 +30,12 @@ try {
     if ($startup -notlike '*StreamDisplayManager.App.exe*') {
         throw 'Autostart registration missing or incorrect'
     }
+    # This CI invocation uses /qn (UILevel=2), so the post-install launch
+    # must NOT start the interactive tray process in unattended deployments.
+    $running = @(Get-CimInstance Win32_Process -Filter "Name = 'StreamDisplayManager.App.exe'" -ErrorAction SilentlyContinue)
+    if ($running.Count -ne 0) {
+        throw "Silent MSI unexpectedly launched $($running.Count) tray process(es)"
+    }
     Write-Host 'Per-user MSI install, shortcut and login startup verified.'
 }
 finally {
