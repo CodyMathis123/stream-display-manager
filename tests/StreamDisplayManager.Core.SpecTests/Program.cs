@@ -528,6 +528,53 @@ VerifyAutoMove("Verification must match the correct game App ID",
         candidatePlan.WindowProcessId!.Value, 9999L, 700, 1));
 VerifyAutoMove("General policy requires known PID and identity evidence",
     !genericPolicy.Observe(candidatePlan with { WindowProcessId = null }, 701).ShouldAttempt);
+
+// Red Dead Redemption 2 2026-11-25: first native move was accepted and
+// observed immediately on DISPLAY6, but the game recreated its HWND before
+// delayed verification and persisted on physical DISPLAY1. Same PID 22216.
+var rdr2RecreatedOnPhysical = new PlacementWindow(
+    "20C7E", 22216, "RDR2", physicalScreen.DeviceName, -2360, 320, 1280, 800, false);
+var rdr2InitialPlan = PlacementPlanner.Evaluate(PlacementInput(
+    new[] { rdr2RecreatedOnPhysical }, appId: 1174180));
+var rdr2ChangedHandlePlan = PlacementPlanner.Evaluate(PlacementInput(
+    new[] { rdr2RecreatedOnPhysical with { WindowHandle = "60C50" } },
+    appId: 1174180));
+var rdr2AnotherChangedHandle = PlacementPlanner.Evaluate(PlacementInput(
+    new[] { rdr2RecreatedOnPhysical with { WindowHandle = "70C50" } },
+    appId: 1174180));
+var recreatedWindowPolicy = new AutomaticPlacementPolicy();
+VerifyAutoMove("RDR2 initial wrong display authorizes attempt 1",
+    recreatedWindowPolicy.Observe(rdr2InitialPlan, 1001).AttemptNumber == 1);
+VerifyAutoMove("Rejected first native move never confirms placement",
+    !recreatedWindowPolicy.ConfirmImmediateMove("20C7E", 22216, 1174180, 1001, 1, false));
+VerifyAutoMove("Unknown HWND cannot confirm an immediate native move",
+    !recreatedWindowPolicy.ConfirmImmediateMove("60C50", 22216, 1174180, 1001, 1, true));
+VerifyAutoMove("Wrong PID cannot confirm an immediate native move",
+    !recreatedWindowPolicy.ConfirmImmediateMove("20C7E", 9999, 1174180, 1001, 1, true));
+VerifyAutoMove("No retry on a new HWND if no move was verified",
+    recreatedWindowPolicy.Observe(rdr2ChangedHandlePlan, 1001).Suppressed);
+VerifyAutoMove("First native move immediately reached virtual output",
+    recreatedWindowPolicy.ConfirmImmediateMove("20C7E", 22216, 1174180, 1001, 1, true));
+AutoMoveDecision rdr2Followup = recreatedWindowPolicy.Observe(rdr2ChangedHandlePlan, 1001);
+VerifyAutoMove("Same game PID with recreated HWND permits attempt 2",
+    rdr2Followup.ShouldAttempt && rdr2Followup.AttemptNumber == 2 &&
+    rdr2Followup.PreviousWindowHandle == "20C7E");
+VerifyAutoMove("Recreated HWND can be confirmed on delayed followup",
+    recreatedWindowPolicy.ConfirmOwnedMove("60C50", 22216, 1174180, 1001, 2));
+VerifyAutoMove("Further RDR2 HWND changes do not permit a third move",
+    recreatedWindowPolicy.Observe(rdr2AnotherChangedHandle, 1001).Suppressed);
+VerifyAutoMove("New Steam session resets recreated-window move allowance",
+    recreatedWindowPolicy.Observe(rdr2InitialPlan, 1002).AttemptNumber == 1);
+var distinctPidPolicy = new AutomaticPlacementPolicy();
+VerifyAutoMove("Different process PID is never a followup candidate",
+    distinctPidPolicy.Observe(rdr2InitialPlan, 1003).AttemptNumber == 1 &&
+    distinctPidPolicy.ConfirmImmediateMove("20C7E", 22216, 1174180, 1003, 1, true) &&
+    distinctPidPolicy.Observe(rdr2ChangedHandlePlan with { WindowProcessId = 9939 }, 1003).Suppressed);
+var sameHandleAfterImmediate = new AutomaticPlacementPolicy();
+VerifyAutoMove("Same HWND may be corrected after immediate first success",
+    sameHandleAfterImmediate.Observe(rdr2InitialPlan, 1004).AttemptNumber == 1 &&
+    sameHandleAfterImmediate.ConfirmImmediateMove("20C7E", 22216, 1174180, 1004, 1, true) &&
+    sameHandleAfterImmediate.Observe(rdr2InitialPlan, 1004).AttemptNumber == 2);
 Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks} total checks passed");
 
 return failures == 0 ? 0 : 1;
