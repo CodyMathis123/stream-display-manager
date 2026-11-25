@@ -7,6 +7,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <deque>
 #include <algorithm>
 #include <map>
 #include <chrono>
@@ -186,7 +187,7 @@ bool ExportDiagnostics(HWND owner,const std::filesystem::path& dir,
     const auto cutoff=std::filesystem::file_time_type::clock::now()-ExportWindow;
     struct Session {std::string first,last,game;unsigned events=0,errors=0;};
     std::map<std::string,Session> sessions;
-    std::vector<std::string> lines;
+    std::deque<std::string> lines;
     std::uintmax_t total=0;
     bool truncated=false;
     try {
@@ -196,31 +197,34 @@ bool ExportDiagnostics(HWND owner,const std::filesystem::path& dir,
             std::string line;
             while(std::getline(stream,line)){
                 if(line.size()>128*1024){truncated=true;continue;}
-                if(total+line.size()+1>ExportLimit){truncated=true;break;}
                 total+=line.size()+1;
-                auto id=Field(line,"sessionId");
-                if(!id.empty()){
-                    auto& session=sessions[id];
-                    auto time=Field(line,"atUtc");
-                    if(session.first.empty())session.first=time;
-                    session.last=time;
-                    ++session.events;
-                    if(Field(line,"severity")=="error")++session.errors;
-                    // App ID is intentionally a numeric field. Preserve only
-                    // the digits needed to group by game, not game/window names.
-                    const auto marker=std::string("\"appId\":");
-                    auto pos=line.find(marker);
-                    if(pos!=std::string::npos){
-                        pos+=marker.size();
-                        std::string app;
-                        while(pos<line.size() && line[pos]>='0' && line[pos]<='9')
-                            app+=line[pos++];
-                        if(!app.empty())session.game=app;
-                    }
-                }
                 lines.push_back(std::move(line));
+                // Keep the most recent events, not the oldest 8 MiB.
+                while(total>ExportLimit && !lines.empty()){
+                    total-=lines.front().size()+1;
+                    lines.pop_front();
+                    truncated=true;
+                }
             }
-            if(truncated)break;
+        }
+        for(const auto& event:lines){
+            auto id=Field(event,"sessionId");
+            if(id.empty())continue;
+            auto& session=sessions[id];
+            auto time=Field(event,"atUtc");
+            if(session.first.empty())session.first=time;
+            session.last=time;
+            ++session.events;
+            if(Field(event,"severity")=="error")++session.errors;
+            const auto marker=std::string("\"appId\":");
+            auto pos=event.find(marker);
+            if(pos!=std::string::npos){
+                pos+=marker.size();
+                std::string app;
+                while(pos<event.size() && event[pos]>='0' && event[pos]<='9')
+                    app+=event[pos++];
+                if(!app.empty())session.game=app;
+            }
         }
         std::ofstream out(filename,std::ios::binary|std::ios::trunc);
         if(!out)throw std::runtime_error("Unable to create export");
@@ -241,7 +245,7 @@ bool ExportDiagnostics(HWND owner,const std::filesystem::path& dir,
         }
         out<<"\nEVENTS ("<<lines.size()<<")\n";
         for(const auto& line:lines)out<<line<<"\n";
-        if(truncated)out<<"\n[Export truncated at 8 MiB; older/remainder events omitted.]\n";
+        if(truncated)out<<"\n[Export truncated at 8 MiB; oldest events omitted.]\n";
         out.close();
         if(!out)throw std::runtime_error("Failed to write export");
         MessageBoxW(owner,L"Diagnostic export saved.",L"Stream Display Manager",
