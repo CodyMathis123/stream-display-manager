@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="src/StreamDisplayManager.Core/StreamDisplayManager.Core.csproj" />
-  <Project Path="src/StreamDisplayManager.App/StreamDisplayManager.App.csproj" />
-  <Project Path="tests/StreamDisplayManager.Core.SpecTests/StreamDisplayManager.Core.SpecTests.csproj" />
-</Solution>
