@@ -135,6 +135,18 @@ jobs:
             throw 'Legacy managed startup registry value must not ship'
           }
           Write-Host 'Validated native EXE and per-user startup registry entry'
+          $actions = @(Read-MsiRows 'SELECT Action FROM InstallExecuteSequence' |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          if ($actions -notcontains 'LaunchInstalledTray' -or
+              -not (@($actions | Where-Object { $_ -match 'Wix4CloseApplications' }).Count -gt 0)) {
+            throw "MSI missing close/launch actions: $($actions -join ',')"
+          }
+          Write-Host 'Validated MSI close/launch scheduling'
+      - name: Exercise MSI lifecycle (silent install and uninstall)
+        shell: pwsh
+        run: |
+          $msi = @(Get-ChildItem installer-output -Filter '*.msi' -Recurse | Select-Object -First 1)
+          ./scripts/Test-MsiLifecycle.ps1 -MsiPath $msi[0].FullName -ExePath native-output/StreamDisplayManager.Native.exe
       - name: Upload native MSI
         uses: actions/upload-artifact@v7
         with:
