@@ -44,16 +44,17 @@ Build a minimal .NET Windows tray/observer application:
 
 **Acceptance:** all pure tests and CI pass, and real games produce diagnostic no-op or dry-run results without moving any windows. A future release must not equate a dry-run candidate with permission to move.
 
-## Phase 2C — Automatic DOOM window relocation experiment
+## Phase 2C — Automatic Steam game window relocation experiment
 
-- When the Steam session and SudoVDA target are both confirmed and stable, a DOOM window on the physical monitor triggers one automatic Win32 `SetWindowPos` move to the live virtual monitor's bounds.
-- Enabled for **DOOM: The Dark Ages only** (App ID 3017860). Starfield and RDR2 remain read-only, and the observer never changes monitor topology or Steam settings.
-- Maximum two attempts per stream session: initial auto-move, then one follow-up only if the first move was verified on SudoVDA before the same game window returned to the physical display. A game previously seen on SudoVDA is eligible for correction if it later appears on the physical monitor, regardless of whether that change was intentional. No third attempt.
-- Before moving, revalidate HWND, PID, exact process name, live source and target displays and geometry. Preserve Z order and foreground activation.
-- Log `placement_plan`, numbered `move_attempt`, `move_result` (including Win32 error and before/after rectangles), later `move_verification`, and `move_owned_confirmation` before permitting a follow-up. `move_suppressed` / `move_skipped` provide reasons.
-- This is an **experiment**, not a production-safe general mover. It has no crash-safe restore journal, Win32 movement may be ignored by DOOM's fullscreen renderer, and game-owned display selection may override the window coordinates. Test on a machine where the physical display remains accessible.
+- Requires a confirmed Steam Remote Play session, a stable, single SudoVDA target, an active physical display, and a confidently identified game window.
+- Games with observed process mappings (Starfield, RDR2, DOOM) are eligible; others are eligible if the actual window PID's executable path resides inside the active Steam App ID's installed game directory according to Steam library folders and appmanifest metadata.
+- A pure planner refuses unknown/ambiguous windows; the generalized native mover revalidates the HWND, PID, live process name, source monitor, target monitor and geometry before calling SetWindowPos.
+- One initial automatic correction, plus one verified follow-up when the same game window returns to physical (as DOOM did at its intro-to-menu transition). No third attempt or unbounded enforcement. A window previously seen on virtual may still receive a correction if it later moves to physical, per the user's requested policy.
+- Logs game_identity (status, PID set, inaccessible process count), placement_plan (app/PID/process, identity evidence), move_attempt (source/target active resolutions, style, requested geometry, attempt number), move_result (Win32 return/error, after geometry/monitor), delayed move_verification, move_owned_confirmation, move_skipped, and move_suppressed.
+- Win32 window relocation cannot itself change a game's selected graphics output or available resolution modes. DOOM displayed on SudoVDA but internally still selected the Dell physical monitor, limiting its graphics menu to the Dell's 3440×1440 mode until the display was changed in-game. QueryDisplayConfig/game-specific display selection are distinct future investigations.
+- This remains experimental; game-native fullscreen behavior can ignore or later override window moves. Automatic disconnect restoration and stable monitor path identity remain unimplemented. Never alter physical monitor topology by default.
 
-**Acceptance:** on a real DOOM Steam Deck session, observe a single attempt and determine from the logs whether the API was accepted and whether the same HWND reaches and stays on SudoVDA. Do not infer success solely from SetWindowPos returning true.
+**Acceptance:** known games and game-directory-identified Steam games use one shared policy; unknown/ambiguous games are logged but untouched; demonstrate verified SudoVDA placement and reproducible no-more-than-two-attempt behavior in real sessions.
 ## Phase 3 — Profiles and optional topology changes
 
 - Support docked/handheld/other profiles using actual streamed mode.
