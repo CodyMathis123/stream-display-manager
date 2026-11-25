@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include "DisplayTopology.h"
+#include "DisplayStrategy.h"
 
 namespace sdm {
 // The tray passes its local data paths explicitly: helpers do not own state.
@@ -12,8 +13,8 @@ std::string Json(const std::string& value);
 void Log(const std::filesystem::path& logdir,const std::string& type,
          const std::string& reason,const std::string& details="");
 std::filesystem::path LocalFolder();
-bool ReadSettings(const std::filesystem::path& settings);
-void SaveSettings(const std::filesystem::path& settings,bool enabled,
+DisplayStrategy ReadStrategy(const std::filesystem::path& settings);
+void SaveStrategy(const std::filesystem::path& settings,DisplayStrategy strategy,
                   const std::filesystem::path& logdir);
 bool StartupEnabled();
 bool SetStartup(bool enable,const std::filesystem::path& logdir);
