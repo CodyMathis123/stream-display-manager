@@ -163,6 +163,9 @@ void ChooseStrategy(sdm::DisplayStrategy desired) {
             sdm::EmergencyExtend();
         }
         activeStrategy=strategy;
+        steamObserver.streamActive=false;
+        steamObserver.endObserved=false;
+        steamObserver.appId=0;
         Log("strategy","applied","\"strategy\":\"disabled\"");
     } else if(steamObserver.streamActive || std::filesystem::exists(journal)) {
         Log("strategy","pending-next-session","\"strategy\":\""+
