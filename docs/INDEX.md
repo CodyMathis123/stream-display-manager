@@ -49,3 +49,26 @@ Historical managed WinForms and experimental game-window relocation work was ret
   correlation to events and exposes **Export diagnostics...** on the tray.
 - [Native design](NATIVE.md#local-diagnostics-no-windows-event-log-integration):
   file naming, export limits, metadata/privacy guarantees.
+
+## Secondary-display CCD investigation
+
+- [CcdCandidate.h](../native/CcdCandidate.h): pure, unit-tested
+  transformation of a secondary virtual source into a compact 0,0
+  single-path candidate, with mode-reference validation and fallback.
+- [DisplayTopology.h](../native/DisplayTopology.h): stage-aware validation,
+  original journal retention, apply/verify/recover.
+- [Native validation](NATIVE.md#secondary-sudovda-isolation-iterative-ccd-candidate-2026-11-25):
+  what to test on the real 4K host.
+- [Bug #11](https://github.com/CodyMathis123/stream-display-manager/issues/11):
+  observed Win32 error 87 in 4K secondary-display sessions.
+
+## Display strategies
+
+- [DisplayStrategy.h](../native/DisplayStrategy.h): persisted mutually
+  exclusive mode names and topology-mode predicate
+- [VirtualPrimaryCandidate.h](../native/VirtualPrimaryCandidate.h):
+  pure transformation that keeps two active paths, putting SudoVDA at (0,0)
+- [WindowRelocator.h](../native/WindowRelocator.h): bounded, opt-in
+  foreground Steam-game window movement with original-window restoration
+- [Native operation notes](NATIVE.md#strategy-submenu-and-virtual-primary-ab-tests-2026-11-25):
+  tray behavior, migration, safeguards and manual DOOM comparison tests

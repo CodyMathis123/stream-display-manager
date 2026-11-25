@@ -22,6 +22,7 @@
 #include "SteamObserver.h"
 #include "AppRuntime.h"
 #include "Diagnostics.h"
+#include "WindowRelocator.h"
 #pragma comment(lib,"user32.lib")
 #pragma comment(lib,"shell32.lib")
 #pragma comment(lib,"advapi32.lib")
@@ -30,11 +31,14 @@
 namespace {
 constexpr UINT kTrayMessage=WM_APP+20;
 constexpr UINT_PTR kPollTimer=1;
-constexpr UINT kToggle=1001,kRestore=1002,kModes=1003,kLogs=1004,kExit=1005,kStartup=1006,kAbout=1007,kExport=1008;
+constexpr UINT kRestore=1002,kModes=1003,kLogs=1004,kExit=1005,kStartup=1006,kAbout=1007,kExport=1008;
+constexpr UINT kModeDisabled=1101,kModeObserve=1102,kModeMove=1103,kModePrimary=1104,kModeOnly=1105;
 HWND hwnd=nullptr;
 NOTIFYICONDATAW icon{};
 std::filesystem::path root,logdir,journal,settings;
-bool enabled=false;
+sdm::DisplayStrategy strategy=sdm::DisplayStrategy::Observe;
+sdm::DisplayStrategy activeStrategy=sdm::DisplayStrategy::Observe;
+sdm::WindowRelocator relocator;
 std::string runId;
 sdm::SteamObserver steamObserver;
 sdm::SessionPolicy sessionPolicy;
@@ -48,14 +52,15 @@ void Log(const std::string& type,const std::string& reason,const std::string& de
     fields+="\"runId\":\""+sdm::Json(runId)+"\"";
     const bool sessionEvent=steamObserver.session>0 &&
         (steamObserver.streamActive || std::filesystem::exists(journal) ||
-         type=="steam_signal" || type=="display_restore" || type=="display_repair");
+         type=="steam_signal" || type=="display_restore" || type=="display_repair" ||
+         type=="window_move" || type=="strategy");
     if(sessionEvent)
         fields+=",\"sessionId\":\""+sdm::Json(runId)+"-"+
             std::to_string(steamObserver.session)+"\"";
     sdm::Log(logdir,type,reason,fields);
 }
 void Tick() {
-    steamObserver.Poll(Log);
+    if(activeStrategy!=sdm::DisplayStrategy::Disabled)steamObserver.Poll(Log);
     auto screens=sdm::Screens();
     const std::wstring signature=sdm::Signature(screens);
     if(signature!=oldTopology) {
@@ -70,10 +75,29 @@ void Tick() {
     const bool virtualPresent=std::any_of(screens.begin(),screens.end(),
         [](const sdm::Screen& s){return s.isVirtual;});
     const bool hasJournal=std::filesystem::exists(journal);
+    // Never hot-switch strategies in the middle of a game. Selection remains
+    // visibly pending until Steam ends AND the original layout is restored.
+    if(!steamObserver.streamActive && !hasJournal && strategy!=activeStrategy) {
+        relocator.Restore(Log);
+        activeStrategy=strategy;
+        Log("strategy","applied","\"strategy\":\""+
+            std::string(sdm::StrategyName(activeStrategy))+"\"");
+    }
+    if(activeStrategy==sdm::DisplayStrategy::MoveToVirtual)
+        relocator.Poll(screens,steamObserver.streamActive,steamObserver.appId,
+            static_cast<std::uint64_t>(steamObserver.session),GetTickCount64(),Log);
+    else relocator.Restore(Log);
+    const bool activeTopology=sdm::IsTopologyStrategy(activeStrategy);
+    const bool needsRepair=activeStrategy==sdm::DisplayStrategy::VirtualOnly
+        ? sdm::HasPhysical(screens)
+        : activeStrategy==sdm::DisplayStrategy::VirtualPrimary &&
+          !sdm::IsVirtualPrimaryExtended(screens);
     const sdm::Evidence evidence{
-        enabled, sdm::SteamRunning(), steamObserver.streamActive, steamObserver.endObserved, virtualPresent,
+        activeTopology, sdm::SteamRunning(), steamObserver.streamActive,
+        steamObserver.endObserved, virtualPresent,
         sdm::HasPhysical(screens), stableCount>=2, hasJournal,
-        static_cast<std::uint64_t>(steamObserver.session), GetTickCount64()
+        static_cast<std::uint64_t>(steamObserver.session), GetTickCount64(),
+        needsRepair
     };
     const auto action=sessionPolicy.Decide(evidence);
     switch(action) {
@@ -84,16 +108,38 @@ void Tick() {
         } else Log("display_restore","pending-retry");
         break;
     case sdm::Action::Switch: {
-        LONG status=sdm::SwitchVirtualOnly(journal);
+        sdm::SwitchDiagnostics diagnostics{};
+        LONG status=activeStrategy==sdm::DisplayStrategy::VirtualPrimary
+            ?sdm::SwitchVirtualPrimary(journal,&diagnostics)
+            :sdm::SwitchVirtualOnly(journal,&diagnostics);
+        // Explain CCD failures without raw adapter IDs/device IDs or a
+        // sensitive copy of the saved original desktop configuration.
+        const std::string fields=
+            "\"win32Error\":"+std::to_string(status)+
+            ",\"stage\":\""+sdm::Json(diagnostics.stage)+"\""+
+            ",\"modePlan\":\""+sdm::Json(diagnostics.modePlan)+"\""+
+            ",\"explicitValidateError\":"+std::to_string(diagnostics.explicitValidateError)+
+            ",\"fallbackValidateError\":"+std::to_string(diagnostics.fallbackValidateError)+
+            ",\"sourceX\":"+std::to_string(diagnostics.sourceX)+
+            ",\"sourceY\":"+std::to_string(diagnostics.sourceY)+
+            ",\"sourceWidth\":"+std::to_string(diagnostics.sourceWidth)+
+            ",\"sourceHeight\":"+std::to_string(diagnostics.sourceHeight)+
+            ",\"virtualModeAware\":"+(diagnostics.virtualAware?"true":"false")+
+            ",\"beforePaths\":"+std::to_string(diagnostics.beforePaths)+
+            ",\"beforeModes\":"+std::to_string(diagnostics.beforeModes)+
+            ",\"candidateModes\":"+std::to_string(diagnostics.candidateModes)+
+            ",\"journalWritten\":"+(diagnostics.journalWritten?"true":"false");
         if(status==ERROR_SUCCESS) {
-            Log("display_switch","virtual-only-active",
-                "\"session\":"+std::to_string(steamObserver.session));
-            sdm::CaptureModes(logdir,sdm::Screens(true),"virtual-only");
-        } else Log("display_switch","failed","\"win32Error\":"+std::to_string(status));
+            const bool primaryMode=activeStrategy==sdm::DisplayStrategy::VirtualPrimary;
+            Log("display_switch",primaryMode?"virtual-primary-active":"virtual-only-active",fields);
+            sdm::CaptureModes(logdir,sdm::Screens(true),
+                primaryMode?"virtual-primary":"virtual-only");
+        } else Log("display_switch","failed",fields);
         break;
     }
     case sdm::Action::Repair: {
-        LONG status=sdm::RepairVirtualOnly(journal);
+        LONG status=activeStrategy==sdm::DisplayStrategy::VirtualPrimary
+            ?sdm::RepairVirtualPrimary(journal):sdm::RepairVirtualOnly(journal);
         Log("display_repair",status==ERROR_SUCCESS ? "re-isolated" : "failed",
             "\"win32Error\":"+std::to_string(status));
         break;
@@ -105,10 +151,53 @@ void Tick() {
 void OpenLogFolder() {
     ShellExecuteW(hwnd,L"open",logdir.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
 }
+void ChooseStrategy(sdm::DisplayStrategy desired) {
+    if(desired==strategy)return;
+    strategy=desired;
+    sdm::SaveStrategy(settings,strategy,logdir);
+    if(strategy==sdm::DisplayStrategy::Disabled) {
+        // User-initiated disable is an immediate safety stop, not deferred.
+        relocator.Restore(Log);
+        if(!sdm::Restore(journal)) {
+            Log("display_restore","mode-disabled-pending-recovery");
+            sdm::EmergencyExtend();
+        }
+        activeStrategy=strategy;
+        steamObserver.streamActive=false;
+        steamObserver.endObserved=false;
+        steamObserver.appId=0;
+        Log("strategy","applied","\"strategy\":\"disabled\"");
+    } else if(steamObserver.streamActive || std::filesystem::exists(journal)) {
+        Log("strategy","pending-next-session","\"strategy\":\""+
+            std::string(sdm::StrategyName(strategy))+"\"");
+    } else {
+        relocator.Restore(Log);
+        activeStrategy=strategy;
+        Log("strategy","applied","\"strategy\":\""+
+            std::string(sdm::StrategyName(strategy))+"\"");
+    }
+    Tick();
+}
 void Menu() {
     HMENU menu=CreatePopupMenu();
     if(!menu)return;
-    AppendMenuW(menu,MF_STRING|(enabled?MF_CHECKED:0),kToggle,L"Use virtual-only during streaming");
+    HMENU display=CreatePopupMenu();
+    if(!display){DestroyMenu(menu);return;}
+    AppendMenuW(display,MF_STRING,kModeDisabled,L"Disabled");
+    AppendMenuW(display,MF_STRING,kModeObserve,L"Observe only (diagnostics)");
+    AppendMenuW(display,MF_STRING,kModeMove,L"Virtual + move game window (experimental)");
+    AppendMenuW(display,MF_STRING,kModePrimary,L"Virtual primary (keep both active)");
+    AppendMenuW(display,MF_STRING,kModeOnly,L"Virtual only (disable physical)");
+    const UINT checked=strategy==sdm::DisplayStrategy::Disabled?kModeDisabled:
+        strategy==sdm::DisplayStrategy::Observe?kModeObserve:
+        strategy==sdm::DisplayStrategy::MoveToVirtual?kModeMove:
+        strategy==sdm::DisplayStrategy::VirtualPrimary?kModePrimary:kModeOnly;
+    CheckMenuRadioItem(display,kModeDisabled,kModeOnly,checked,MF_BYCOMMAND);
+    if(activeStrategy!=strategy) {
+        AppendMenuW(display,MF_SEPARATOR,0,nullptr);
+        AppendMenuW(display,MF_STRING|MF_GRAYED,0,L"Change applies after current stream");
+    }
+    AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(display),L"Display handling");
     AppendMenuW(menu,MF_STRING,kRestore,L"Restore physical display now");
     AppendMenuW(menu,MF_STRING,kModes,L"Capture display modes");
     AppendMenuW(menu,MF_STRING,kLogs,L"Open diagnostics folder");
@@ -140,9 +229,13 @@ LRESULT CALLBACK WindowProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
         return 0;
     case WM_COMMAND:
         switch(LOWORD(wp)){
-        case kToggle: enabled=!enabled;sdm::SaveSettings(settings,enabled,logdir);
-            if(!enabled)sdm::Restore(journal);Tick();break;
-        case kRestore: enabled=false;sdm::SaveSettings(settings,enabled,logdir);
+        case kModeDisabled:ChooseStrategy(sdm::DisplayStrategy::Disabled);break;
+        case kModeObserve:ChooseStrategy(sdm::DisplayStrategy::Observe);break;
+        case kModeMove:ChooseStrategy(sdm::DisplayStrategy::MoveToVirtual);break;
+        case kModePrimary:ChooseStrategy(sdm::DisplayStrategy::VirtualPrimary);break;
+        case kModeOnly:ChooseStrategy(sdm::DisplayStrategy::VirtualOnly);break;
+        case kRestore:
+            ChooseStrategy(sdm::DisplayStrategy::Disabled);
             if(!sdm::Restore(journal))sdm::EmergencyExtend();
             Tick();break;
         case kModes: sdm::CaptureModes(logdir,sdm::Screens(true),"manual");break;
@@ -161,6 +254,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
     case WM_CLOSE:DestroyWindow(w);return 0;
     case WM_DESTROY:
         KillTimer(w,kPollTimer);
+        relocator.Restore(Log);
         sdm::Restore(journal);
         Shell_NotifyIconW(NIM_DELETE,&icon);
         PostQuitMessage(0);return 0;
@@ -201,7 +295,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int){
     if(!singleton)return 1;
     if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(singleton);return 0;}
 
-    enabled=sdm::ReadSettings(settings);
+    strategy=sdm::ReadStrategy(settings);
+    activeStrategy=strategy;
     if(std::filesystem::exists(journal)) {
         if(sdm::Restore(journal))Log("display_restore","startup-recovery");
         else Log("display_restore","startup-recovery-pending");
@@ -226,7 +321,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int){
     icon.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101));
     wcscpy_s(icon.szTip,L"Stream Display Manager");
     Shell_NotifyIconW(NIM_ADD,&icon);
-    Log("lifecycle","native-started","\"strategy\":\"virtual-only-or-observe\"");
+    Log("lifecycle","native-started",
+        "\"strategy\":\""+std::string(sdm::StrategyName(strategy))+"\"");
     MSG msg{};
     while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}
     Log("lifecycle","native-stopped");

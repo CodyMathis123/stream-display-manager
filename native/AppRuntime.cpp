@@ -47,26 +47,45 @@ std::filesystem::path LocalFolder() {
         return std::filesystem::path(buffer)/L"StreamDisplayManager";
     return std::filesystem::temp_directory_path()/L"StreamDisplayManager";
 }
-bool ReadSettings(const std::filesystem::path& settings) {
+DisplayStrategy ReadStrategy(const std::filesystem::path& settings) {
     std::ifstream file(settings,std::ios::binary);
-    if(!file)return false;
+    if(!file)return DisplayStrategy::Observe; // historical disabled default
     std::string data((std::istreambuf_iterator<char>(file)),{});
-    auto key=data.find("\"VirtualOnlyDuringStreaming\"");
-    if(key==std::string::npos)return false;
-    auto colon=data.find(':',key);
-    if(colon==std::string::npos)return false;
-    auto val=data.find_first_not_of(" \r\n\t",colon+1);
-    return val!=std::string::npos && data.compare(val,4,"true")==0;
+    // Prefer the new explicit enum, but retain the old bool as a migration
+    // fallback. An unknown new value is intentionally non-mutating.
+    const auto key=data.find("\"DisplayStrategy\"");
+    if(key!=std::string::npos) {
+        const auto colon=data.find(':',key);
+        if(colon==std::string::npos)return DisplayStrategy::Observe;
+        const auto quote=data.find('"',colon+1);
+        if(quote==std::string::npos)return DisplayStrategy::Observe;
+        const auto end=data.find('"',quote+1);
+        if(end==std::string::npos)return DisplayStrategy::Observe;
+        return ParseStrategy(std::string_view(data).substr(quote+1,end-quote-1));
+    }
+    const auto legacy=data.find("\"VirtualOnlyDuringStreaming\"");
+    if(legacy==std::string::npos)return DisplayStrategy::Observe;
+    const auto colon=data.find(':',legacy);
+    if(colon==std::string::npos)return DisplayStrategy::Observe;
+    const auto value=data.find_first_not_of(" \r\n\t",colon+1);
+    return value!=std::string::npos && data.compare(value,4,"true")==0
+        ?DisplayStrategy::VirtualOnly:DisplayStrategy::Observe;
 }
-void SaveSettings(const std::filesystem::path& settings,bool enabled,const std::filesystem::path& logdir) {
+void SaveStrategy(const std::filesystem::path& settings,
+                  DisplayStrategy strategy,const std::filesystem::path& logdir) {
     auto temp=settings;temp+=L".tmp";
     {std::ofstream file(temp,std::ios::binary|std::ios::trunc);
      if(!file){Log(logdir,"settings","write-failed");return;}
-     file<<"{\"VirtualOnlyDuringStreaming\":"<<(enabled?"true":"false")<<"}\n";
+     file<<"{\"DisplayStrategy\":\""<<StrategyName(strategy)
+         <<"\",\"VirtualOnlyDuringStreaming\":"
+         <<(strategy==DisplayStrategy::VirtualOnly?"true":"false")<<"}\n";
     }
-    if(!MoveFileExW(temp.c_str(),settings.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
-        Log(logdir,"settings","rename-failed", "\"win32Error\":"+std::to_string(GetLastError()));
-    else Log(logdir,"settings","saved",std::string("\"enabled\":")+(enabled?"true":"false"));
+    if(!MoveFileExW(temp.c_str(),settings.c_str(),
+          MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
+        Log(logdir,"settings","rename-failed",
+            "\"win32Error\":"+std::to_string(GetLastError()));
+    else Log(logdir,"settings","saved",
+             "\"strategy\":\""+std::string(StrategyName(strategy))+"\"");
 }
 
 bool ReadRunValue(const wchar_t* name,std::wstring& value) {

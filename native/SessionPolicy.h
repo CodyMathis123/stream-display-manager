@@ -28,6 +28,7 @@ struct Evidence {
     bool hasJournal=false;
     std::uint64_t session=0;
     std::uint64_t now=0;
+    bool needsRepair=false; // supplied by the active strategy, not assumed from physical presence
 };
 class SessionPolicy {
 public:
@@ -64,7 +65,7 @@ public:
             repairs_=0;
             lastRepair_.reset();
         }
-        if (e.physicalPresent && e.stable && repairs_<MaxRepairsPerSession &&
+        if (e.needsRepair && e.stable && repairs_<MaxRepairsPerSession &&
             (!lastRepair_ || e.now-*lastRepair_>=RepairCooldownMs)) {
             lastRepair_=e.now;
             ++repairs_;

@@ -1,6 +1,6 @@
 # Stream Display Manager
 
-A lightweight native C++ / Win32 tray application for Steam Remote Play. During a confirmed SudoVDA stream, it temporarily switches Windows to the virtual display only. After the stream ends, it restores the physical desktop.
+A lightweight native C++ / Win32 tray application for Steam Remote Play. During a confirmed SudoVDA stream, it can temporarily isolate the virtual display, promote it to primary while retaining the physical monitor, or attempt to move an eligible game window. The original desktop is restored when switching modes that modify topology.
 
 **Native-only project.** The managed .NET / WinForms app is retired. No .NET runtime, browser UI or separate Windows service is needed.
 
@@ -10,8 +10,8 @@ A lightweight native C++ / Win32 tray application for Steam Remote Play. During 
 - Saves the current Windows CCD display paths, then switches to SudoVDA-only after topology stabilization.
 - Restores the physical monitor on stream completion, SudoVDA detach or normal app exit. Handles Steam restoring the physical desktop itself.
 - Does not save the temporary display topology to Windows' persistent display configuration.
-- Preserves the virtual-only preference in %LOCALAPPDATA%\StreamDisplayManager\settings.json.
-- Provides tray toggles for virtual-only mode and **Start with Windows**, plus manual restoration and resolution capture.
+- Preserves the selected display strategy in %LOCALAPPDATA%\StreamDisplayManager\settings.json, migrating the previous virtual-only boolean preference.
+- Provides a **Display handling** radio submenu with Disabled, Observe, Virtual + move (experimental), Virtual primary (both attached), and Virtual only (physical disabled). Also provides **Start with Windows**, restoration and resolution capture.
 - Installer enables per-user Windows startup by default. The tray can turn startup off.
 
 ## Install
@@ -54,3 +54,33 @@ The output is user-local; there is no Windows Event Log registration, network
 upload, monitoring service or per-game directory. Exported events can include
 Steam App IDs and display/device descriptions; inspect the file before sharing.
 See [native diagnostic details](docs/NATIVE.md#local-diagnostics-no-windows-event-log-integration).
+
+
+## Display handling modes (experimental comparison)
+
+Right-click the tray icon → **Display handling**. Exactly one strategy is selected:
+
+| Selection | What changes | Recovery |
+| --- | --- | --- |
+| **Disabled** | No Steam stream observation or display changes | Immediate attempt to restore any journaled topology |
+| **Observe only** | Logs Steam sessions and display topology; never writes display settings | Not needed |
+| **Virtual + move game window** | Keeps original primary display and both outputs attached; attempts to move a foreground Steam game window to SudoVDA | Best-effort original window placement after stream |
+| **Virtual primary** | Keeps both outputs attached; sets SudoVDA at (0,0) and physical monitor immediately right of it | Original CCD restored from journal |
+| **Virtual only** | Existing isolation: removes the physical monitor from the active desktop during streaming | Original CCD restored from journal |
+
+**Important:** Virtual + move only recognizes a visible, foreground, sufficiently large Windows game
+window with an executable path under \`steamapps\\common\`. It does not intercept Vulkan/DirectX,
+hook processes, or guarantee movement of exclusive-fullscreen games. It gives up after a bounded
+number of attempts and logs whether a move succeeded. This mode does not alter Windows display
+topology. Other installations and game launchers may not match the filter. The game can also
+reposition itself afterward.
+
+**Safety:** Virtual primary currently supports exactly **one physical monitor and one SudoVDA
+virtual monitor**; validation fails closed on other layouts. Both topology-changing modes
+use validation, the original binary recovery journal, verification and restoration, and never
+save the streaming layout to the Windows display database.
+
+Changes selected during an active stream are **deferred until the current stream is over**
+to avoid hot-switching mid-game. **Disabled** is the exception: it stops managing the stream
+and attempts immediate physical-desktop restoration. The tray displays the pending status.
+For a clean A/B comparison, finish the current session and reconnect after changing modes.
