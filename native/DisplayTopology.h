@@ -9,6 +9,7 @@
 #include <fstream>
 #include <cstdint>
 #include <cwchar>
+#include <cwctype>
 
 namespace sdm {
 struct Ccd {
@@ -48,7 +49,7 @@ struct Screen {
     LONG width=0, height=0;
     std::set<std::wstring> modes;
 };
-inline std::vector<Screen> Screens() {
+inline std::vector<Screen> Screens(bool enumerateModes=false) {
     std::vector<Screen> screens;
     for(DWORD i=0;i<32;++i) {
         DISPLAY_DEVICEW device{sizeof(DISPLAY_DEVICEW)};
@@ -68,7 +69,7 @@ inline std::vector<Screen> Screens() {
         s.width=static_cast<LONG>(current.dmPelsWidth);
         s.height=static_cast<LONG>(current.dmPelsHeight);
         // Advertised GDI display modes, not a claim about the game's renderer.
-        for(DWORD mode=0;mode<2048;++mode) {
+        for(DWORD mode=0;enumerateModes && mode<2048;++mode) {
             DEVMODEW m{}; m.dmSize=sizeof(m);
             if(!EnumDisplaySettingsExW(device.DeviceName,mode,&m,0)) break;
             if(m.dmPelsWidth==0 || m.dmPelsHeight==0) continue;
