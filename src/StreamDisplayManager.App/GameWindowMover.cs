@@ -7,11 +7,11 @@ using StreamDisplayManager.Core;
 namespace StreamDisplayManager.App;
 
 /// <summary>
-/// One-shot DOOM experiment: move and resize its existing top-level HWND to the
-/// live SudoVDA bounds. Does not alter displays, force focus, change fullscreen
-/// graphics settings or retry after a rejected Win32 call.
+/// Generic Win32 move attempt for an identified Steam game window. The caller
+/// enforces the attempt budget and Steam/SudoVDA session correlation.
+/// This cannot change the game's *internal* selected output/resolution modes.
 /// </summary>
-internal static class ExperimentalDoomMover
+internal static class GameWindowMover
 {
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
@@ -19,10 +19,10 @@ internal static class ExperimentalDoomMover
     private const uint PositionFlags = SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder;
     private const int GwlStyle = -16;
 
-    public static ExperimentalMoveResult Attempt(
+    public static GameWindowMoveResult Attempt(
         PlacementPlan plan, DesktopSnapshot snapshot, JsonLog log, int attemptNumber)
     {
-        var outcome = new ExperimentalMoveResult
+        var outcome = new GameWindowMoveResult
         {
             AttemptNumber = attemptNumber,
             WindowHandle = plan.WindowHandle ?? "",
@@ -31,16 +31,19 @@ internal static class ExperimentalDoomMover
             Status = "preflight-rejected"
         };
 
-        ExperimentalMoveResult Reject(string reason)
+        GameWindowMoveResult Reject(string reason)
         {
             var rejected = outcome with { Status = reason };
-            log.Write("move_skipped", "doom-auto-preflight", rejected);
+            log.Write("move_skipped", "steam-game-auto-preflight", rejected);
             return rejected;
         }
 
         // Revalidate live HWND and process just before touching Win32.
-        if (plan.AppId != ExperimentalAutoMovePolicy.EnabledAppId ||
+        if (plan.AppId is not long appId || appId <= 0 ||
             plan.Status != PlacementStatus.WouldMove ||
+            plan.WindowProcessId is not uint gamePid || gamePid == 0 ||
+            string.IsNullOrWhiteSpace(plan.WindowProcessName) ||
+            plan.IdentityEvidence == "none" ||
             string.IsNullOrWhiteSpace(plan.WindowHandle) ||
             string.IsNullOrWhiteSpace(plan.SourceDisplay) ||
             string.IsNullOrWhiteSpace(plan.TargetDisplay))
@@ -48,11 +51,12 @@ internal static class ExperimentalDoomMover
 
         WindowObservation[] candidates = snapshot.Windows.Where(w =>
             string.Equals(w.WindowHandle, plan.WindowHandle, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(w.ProcessName, "DOOMTheDarkAges", StringComparison.OrdinalIgnoreCase))
+            w.ProcessId == gamePid &&
+            string.Equals(w.ProcessName, plan.WindowProcessName, StringComparison.OrdinalIgnoreCase))
             .ToArray();
         if (candidates.Length != 1 || candidates[0].ProcessId == 0 ||
             candidates[0].IsMinimized)
-            return Reject("Expected exactly one live, nonminimized DOOM window.");
+            return Reject("Expected exactly one live, nonminimized Steam game window.");
 
         WindowObservation observed = candidates[0];
         outcome = outcome with { ProcessId = observed.ProcessId };
@@ -72,9 +76,9 @@ internal static class ExperimentalDoomMover
         try
         {
             using Process process = Process.GetProcessById(checked((int)livePid));
-            if (!string.Equals(process.ProcessName, "DOOMTheDarkAges",
+            if (!string.Equals(process.ProcessName, plan.WindowProcessName,
                     StringComparison.OrdinalIgnoreCase))
-                return Reject("Live process is not DOOMTheDarkAges.");
+                return Reject("Process executable name changed since the game assessment.");
             processStartUtc = process.StartTime.ToUniversalTime();
         }
         catch (Exception ex)
@@ -118,9 +122,13 @@ internal static class ExperimentalDoomMover
         Rectangle target = targets[0].Bounds;
         long style = GetWindowLongPtr(hwnd, GwlStyle).ToInt64();
 
-        log.Write("move_attempt", "doom-auto-setwindowpos", new
+        log.Write("move_attempt", "steam-game-auto-setwindowpos", new
         {
             plan.AppId, plan.WindowHandle,
+            plan.WindowProcessName, plan.IdentityEvidence,
+            targetMode = new { targets[0].Bounds.Width, targets[0].Bounds.Height },
+            sourceMode = new { sources[0].Bounds.Width, sources[0].Bounds.Height },
+            gameInternalMonitorSelection = "not-observable-by-win32",
             processId = livePid,
             processStartUtc,
             sourceDisplay = plan.SourceDisplay,
@@ -131,7 +139,7 @@ internal static class ExperimentalDoomMover
             flags = $"0x{PositionFlags:X}",
             method = "SetWindowPos",
             attemptNumber,
-            maxAttemptsPerSession = ExperimentalAutoMovePolicy.MaxAttemptsPerSession
+            maxAttemptsPerSession = AutomaticPlacementPolicy.MaxAttemptsPerSession
         });
 
         Stopwatch stopwatch = Stopwatch.StartNew();
@@ -157,7 +165,7 @@ internal static class ExperimentalDoomMover
             Win32Error = win32Error,
             DurationMs = stopwatch.ElapsedMilliseconds
         };
-        log.Write("move_result", "doom-auto-setwindowpos", result);
+        log.Write("move_result", "steam-game-auto-setwindowpos", result);
         return result;
     }
 
@@ -195,7 +203,7 @@ internal static class ExperimentalDoomMover
         IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
 }
 
-internal sealed record ExperimentalMoveResult
+internal sealed record GameWindowMoveResult
 {
     public int AttemptNumber { get; init; }
     public string WindowHandle { get; init; } = "";
