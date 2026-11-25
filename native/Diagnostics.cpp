@@ -11,6 +11,7 @@
 #include <map>
 #include <chrono>
 #include <cstdio>
+#include <stdexcept>
 #include "Diagnostics.h"
 #pragma comment(lib,"comdlg32.lib")
 
@@ -223,11 +224,10 @@ bool ExportDiagnostics(HWND owner,const std::filesystem::path& dir,
         }
         std::ofstream out(filename,std::ios::binary|std::ios::trunc);
         if(!out)throw std::runtime_error("Unable to create export");
-        SYSTEMTIME now{};GetSystemTime(&now);
         out<<"Stream Display Manager - diagnostics export\n"
            <<"Version: ";
         // Encode the version as ASCII digits; no private machine paths.
-        for(auto ch:version)if(ch>='0'&&ch<='9'||ch=='.')out<<static_cast<char>(ch);
+        for(auto ch:version)if((ch>='0'&&ch<='9')||ch=='.')out<<static_cast<char>(ch);
         out<<"\nExported UTC: "<<TimeUtc()<<"\n"
            <<"Scope: last seven days, up to 8 MiB\n"
            <<"Source: app-generated sanitized JSONL (not raw Steam logs)\n"
