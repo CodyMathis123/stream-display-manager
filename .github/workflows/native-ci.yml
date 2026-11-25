@@ -152,7 +152,7 @@ jobs:
         with:
           name: StreamDisplayManager-MSI
           path: installer-output/**/*.msi
-          archive: false
+          archive: true
           if-no-files-found: error
           retention-days: 14
       - name: Upload native standalone executable
