@@ -1,6 +1,7 @@
 // Bounded user-local JSONL storage and on-demand, readable export.
 // No Win32 Event Log source, background worker, third-party compression or DB.
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <commdlg.h>
 #include <filesystem>
@@ -131,7 +132,7 @@ void PruneDiagnostics(const std::filesystem::path& dir) {
         if(total<=RetentionLimit)break;
         if(file.path==current || !std::filesystem::exists(file.path,ec))continue;
         std::filesystem::remove(file.path,ec);
-        if(!ec)total-=std::min(total,file.size);
+        if(!ec)total-=total<file.size?total:file.size;
     }
 }
 void AppendDiagnostic(const std::filesystem::path& dir,const std::string& type,
