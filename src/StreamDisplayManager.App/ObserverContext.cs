@@ -411,14 +411,13 @@ internal sealed class ObserverContext : ApplicationContext
             result = window is null ? "window-not-observed" :
                 onVirtual ? "on-virtual-target" :
                 onSource ? "remained-or-returned-to-physical" : "other-display",
-            samePidReplacementWindows = window is null
-                ? snapshot.Windows.Where(w => w.ProcessId == attempt.ProcessId)
-                    .Select(w => new
-                    {
-                        w.WindowHandle, w.DeviceName,
-                        w.X, w.Y, w.Width, w.Height
-                    }).ToArray()
-                : [],
+            samePidReplacementWindows = snapshot.Windows
+                .Where(w => window is null && w.ProcessId == attempt.ProcessId)
+                .Select(w => new
+                {
+                    w.WindowHandle, w.DeviceName,
+                    w.X, w.Y, w.Width, w.Height
+                }).ToArray(),
             actualDisplay = window?.DeviceName,
             actualRect = window is null ? null :
                 new { window.X, window.Y, window.Width, window.Height },
