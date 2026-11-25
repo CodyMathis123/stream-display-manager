@@ -46,5 +46,49 @@ foreach (var check in checks)
         failures++;
 }
 
-Console.WriteLine($"{checks.Length - failures}/{checks.Length} checks passed");
+Console.WriteLine($"{checks.Length - failures}/{checks.Length} session checks passed");
+
+var desktopScreen = new ObservedScreen(@"\\.\DISPLAY1", true, 3440, 1440);
+var desktopAdapter = new ObservedAdapter(@"\\.\DISPLAY1", false, true);
+var virtualAdapter = new ObservedAdapter(@"\\.\DISPLAY6", true, false);
+var activeVirtualAdapter = virtualAdapter with { IsAttachedToDesktop = true };
+var deckScreen = new ObservedScreen(@"\\.\DISPLAY6", true, 1280, 800);
+var secondaryDesktop = desktopScreen with { IsPrimary = false };
+var topologyChecks = new (string Name, TopologyAssessment Result,
+    bool ExpectedConsistent, int ExpectedVirtual, bool ExpectedVirtualPrimary)[]
+{
+    ("Installed SudoVDA is not an active screen",
+        TopologyClassifier.Classify(new[] { desktopScreen },
+            new[] { desktopAdapter, virtualAdapter }),
+        true, 0, false),
+    ("Attached SudoVDA before screen enumeration is transient",
+        TopologyClassifier.Classify(new[] { desktopScreen },
+            new[] { desktopAdapter, activeVirtualAdapter }),
+        false, 0, false),
+    ("Deck virtual primary is a consistent topology",
+        TopologyClassifier.Classify(new[] { secondaryDesktop, deckScreen },
+            new[] { desktopAdapter, activeVirtualAdapter }),
+        true, 1, true),
+    ("Stale desktop screen after driver detach is transient",
+        TopologyClassifier.Classify(new[] { secondaryDesktop, deckScreen },
+            new[] { desktopAdapter, virtualAdapter }),
+        false, 0, false),
+    ("Physical monitor is primary after disconnect",
+        TopologyClassifier.Classify(new[] { desktopScreen },
+            new[] { desktopAdapter, virtualAdapter }),
+        true, 0, false)
+};
+
+foreach (var check in topologyChecks)
+{
+    bool passed = check.Result.IsConsistent == check.ExpectedConsistent &&
+        check.Result.ActiveVirtualDisplays == check.ExpectedVirtual &&
+        check.Result.VirtualIsPrimary == check.ExpectedVirtualPrimary;
+
+    Console.WriteLine($"{(passed ? "PASS" : "FAIL")} {check.Name}");
+    if (!passed)
+        failures++;
+}
+
+Console.WriteLine($"{checks.Length + topologyChecks.Length - failures}/{checks.Length + topologyChecks.Length} total checks passed");
 return failures == 0 ? 0 : 1;

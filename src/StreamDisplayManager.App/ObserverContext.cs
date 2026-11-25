@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Text.Json;
+using StreamDisplayManager.Core;
 
 namespace StreamDisplayManager.App;
 
@@ -12,6 +13,9 @@ internal sealed class ObserverContext : ApplicationContext
     private readonly MessageWindow _messageWindow;
     private readonly JsonLog _log;
     private string? _previousSerializedSnapshot;
+    private string? _pendingTopologySignature;
+    private DateTimeOffset _pendingTopologySince;
+    private string? _lastStableTopologySignature;
     private bool _closed;
 
     public ObserverContext()
@@ -85,14 +89,43 @@ internal sealed class ObserverContext : ApplicationContext
 
             // Installed virtual outputs may be enumerated even when none are attached.
             // Do not imply an active streaming display just because the driver exists.
-            int activeVirtual = snapshot.Adapters.Count(adapter =>
-                adapter.IsSudoVdaCandidate &&
-                adapter.IsAttachedToDesktop &&
-                snapshot.Screens.Any(screen => screen.DeviceName == adapter.DeviceName));
+            var topology = TopologyClassifier.Classify(
+                snapshot.Screens.Select(screen =>
+                    new ObservedScreen(screen.DeviceName, screen.Primary, screen.Width, screen.Height)),
+                snapshot.Adapters.Select(adapter =>
+                    new ObservedAdapter(adapter.DeviceName, adapter.IsSudoVdaCandidate,
+                        adapter.IsAttachedToDesktop)));
 
-            _tray.Text = activeVirtual > 0
-                ? "Stream Display Manager: active virtual display"
-                : "Stream Display Manager: desktop observer";
+            // A device notification can precede Windows updating its desktop screen list.
+            // Changes need to be consistent and stable before we trust the topology.
+            var now = DateTimeOffset.UtcNow;
+            if (_pendingTopologySignature != topology.Signature)
+            {
+                _pendingTopologySignature = topology.Signature;
+                _pendingTopologySince = now;
+            }
+
+            if (topology.IsConsistent &&
+                now - _pendingTopologySince >= TimeSpan.FromMilliseconds(750) &&
+                _lastStableTopologySignature != topology.Signature)
+            {
+                _lastStableTopologySignature = topology.Signature;
+                _log.Write("topology_stable", "reconciled", new
+                {
+                    topology.IsConsistent,
+                    topology.ActivePhysicalDisplays,
+                    topology.ActiveVirtualDisplays,
+                    topology.VirtualIsPrimary,
+                    topology.Screens,
+                    topology.Signature
+                });
+            }
+
+            _tray.Text = !topology.IsConsistent
+                ? "Stream Display Manager: topology changing"
+                : topology.ActiveVirtualDisplays > 0
+                    ? "Stream Display Manager: active virtual display"
+                    : "Stream Display Manager: desktop observer";
         }
         catch (Exception ex)
         {
