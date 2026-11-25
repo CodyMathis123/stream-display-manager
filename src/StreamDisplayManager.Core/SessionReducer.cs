@@ -11,20 +11,39 @@ public static class SessionReducer
         SessionEvidence evidence,
         bool hasOwnedMoves)
     {
-        if (evidence.SessionEndConfirmed || !evidence.VirtualDisplayPresent)
-        {
-            if (hasOwnedMoves)
-            {
-                return new SessionDecision(
-                    SessionPhase.Restoring, false,
-                    evidence.SessionEndConfirmed
-                        ? "Confirmed end; owned windows require safe restoration."
-                        : "Virtual target disappeared; owned windows require safe restoration.");
-            }
+        if (previous == SessionPhase.RecoveryRequired)
+            return new SessionDecision(SessionPhase.RecoveryRequired, false,
+                "RecoveryRequired must be explicitly reconciled.");
 
-            return new SessionDecision(
-                SessionPhase.Desktop, false,
-                "No active virtual streaming target and no owned moves.");
+        // Steam completes the stream before SudoVDA finishes detaching.
+        // Don't initiate window restoration or advertise Desktop until the
+        // real physical desktop is stable.
+        if (evidence.SessionEndConfirmed)
+        {
+            if (evidence.VirtualDisplayPresent || !evidence.TargetDisplayStable)
+                return new SessionDecision(SessionPhase.Disconnecting, false,
+                    "Steam completed; waiting for physical desktop to stabilize.");
+
+            return hasOwnedMoves
+                ? new SessionDecision(SessionPhase.Restoring, false,
+                    "Confirmed end; stable physical desktop; restore owned windows.")
+                : new SessionDecision(SessionPhase.Desktop, false,
+                    "Confirmed end; physical desktop restored.");
+        }
+
+        if (!evidence.VirtualDisplayPresent)
+        {
+            if ((previous == SessionPhase.Streaming ||
+                 previous == SessionPhase.Disconnecting) &&
+                !evidence.TargetDisplayStable)
+                return new SessionDecision(SessionPhase.Disconnecting, false,
+                    "Virtual target disappeared; waiting for physical desktop to stabilize.");
+
+            return hasOwnedMoves
+                ? new SessionDecision(SessionPhase.Restoring, false,
+                    "Virtual target removed; owned windows require validated restoration.")
+                : new SessionDecision(SessionPhase.Desktop, false,
+                    "No active virtual streaming target and no owned moves.");
         }
 
         if (!evidence.SteamRunning)
@@ -48,13 +67,6 @@ public static class SessionReducer
                 "Streaming confirmed, awaiting stable target display.");
         }
 
-        if (previous is SessionPhase.RecoveryRequired)
-        {
-            return new SessionDecision(
-                SessionPhase.RecoveryRequired, false,
-                "RecoveryRequired must be explicitly reconciled.");
-        }
-
         return new SessionDecision(
             SessionPhase.Streaming, true,
             "Steam session confirmed; stable virtual target available.");
@@ -67,6 +79,7 @@ public enum SessionPhase
     Candidate,
     Preparing,
     Streaming,
+    Disconnecting,
     Restoring,
     RecoveryRequired
 }

@@ -3,7 +3,7 @@ using StreamDisplayManager.Core;
 var checks = new (string Name, SessionDecision Actual, SessionPhase Expected, bool MayMove)[]
 {
     ("Steam alone cannot move", SessionReducer.Evaluate(
-        SessionPhase.Desktop, new SessionEvidence(true, false, false), false),
+        SessionPhase.Desktop, new SessionEvidence(true, false, false, TargetDisplayStable: true), false),
         SessionPhase.Desktop, false),
 
     ("Uncorroborated virtual target cannot move", SessionReducer.Evaluate(
@@ -23,11 +23,11 @@ var checks = new (string Name, SessionDecision Actual, SessionPhase Expected, bo
         SessionPhase.Streaming, true),
 
     ("Disconnected target restores owned moves", SessionReducer.Evaluate(
-        SessionPhase.Streaming, new SessionEvidence(true, false, false), true),
+        SessionPhase.Streaming, new SessionEvidence(true, false, false, TargetDisplayStable: true), true),
         SessionPhase.Restoring, false),
 
     ("Disconnected target with no owned moves is desktop", SessionReducer.Evaluate(
-        SessionPhase.Streaming, new SessionEvidence(true, false, false), false),
+        SessionPhase.Streaming, new SessionEvidence(true, false, false, TargetDisplayStable: true), false),
         SessionPhase.Desktop, false),
 
     ("Recovery required is sticky", SessionReducer.Evaluate(
@@ -170,6 +170,30 @@ void VerifySteam(string name, bool passed)
         failures++;
 }
 
+// The host's Encoding complete marker precedes virtual-display removal.
+void VerifyDisconnect(string name, SessionDecision decision, SessionPhase expected)
+{
+    bool pass = decision.NextPhase == expected && !decision.MayPlanWindowMoves;
+    Console.WriteLine($"{(pass ? "PASS" : "FAIL")} {name}");
+    if (!pass) failures++;
+}
+VerifyDisconnect("Steam complete while SudoVDA present",
+    SessionReducer.Evaluate(SessionPhase.Streaming,
+        new SessionEvidence(true, true, false, SessionEndConfirmed: true, TargetDisplayStable: true), false),
+    SessionPhase.Disconnecting);
+VerifyDisconnect("Unstable detach is not yet Desktop",
+    SessionReducer.Evaluate(SessionPhase.Disconnecting,
+        new SessionEvidence(true, false, false, SessionEndConfirmed: true, TargetDisplayStable: false), false),
+    SessionPhase.Disconnecting);
+VerifyDisconnect("Stable physical topology completes disconnect",
+    SessionReducer.Evaluate(SessionPhase.Disconnecting,
+        new SessionEvidence(true, false, false, SessionEndConfirmed: true, TargetDisplayStable: true), false),
+    SessionPhase.Desktop);
+VerifyDisconnect("Owned-window restore delayed until physical desktop is stable",
+    SessionReducer.Evaluate(SessionPhase.Disconnecting,
+        new SessionEvidence(true, false, false, SessionEndConfirmed: true, TargetDisplayStable: true), true),
+    SessionPhase.Restoring);
+
 const string prefix = "[2026-11-25 09:10:39][208376.813953] ";
 var startSignal = SteamSignalParser.Parse(
     prefix + "Streaming started to steamdeck at 192.0.2.10:55568, audio channels = 2, MTU = 1468");
@@ -225,5 +249,5 @@ VerifySteam("Session reducer requires corroborating display evidence",
     !SessionReducer.Evaluate(SessionPhase.Candidate,
         new SessionEvidence(true, false, steamState.IsActive), false).MayPlanWindowMoves);
 
-Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks} total checks passed");
+Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 4 - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 4} total checks passed");
 return failures == 0 ? 0 : 1;
