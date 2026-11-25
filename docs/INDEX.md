@@ -16,6 +16,10 @@ This is the navigation page for maintainers and coding agents. Keep it current w
 | Release | [release.yml](../.github/workflows/release.yml) | Manual verified Production MSI promotion |
 | Regression tests | [native_reliability.cpp](../tests/native_reliability.cpp) | Steam log and recovery decision tests, no real display mutation |
 
+## Reusable agent workflow
+
+- [Native validation skill](../.agents/skills/native-validation/SKILL.md) — focused checklist for Steam/recovery, EXE resource and MSI lifecycle changes; no extra installed tools
+
 ## Engineering reference
 
 - [AGENTS.md](../AGENTS.md) — hard safety invariants, default coding rules, verification expectations
