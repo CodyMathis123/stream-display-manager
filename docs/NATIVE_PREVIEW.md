@@ -10,7 +10,7 @@ The **Native C++ preview (MSVC)** GitHub Action builds a standalone StreamDispla
 
 Both executables use the same Local\\StreamDisplayManager.Observer mutex. Exit the managed tray app before launching the native preview. If the native preview immediately exits, check whether the managed app is still running. Verify that the physical display is restored before switching implementations.
 
-The tray menu provides the virtual-only setting, manual restoration, mode capture, diagnostics folder and Exit. The native app reads the existing %LOCALAPPDATA%\\StreamDisplayManager\\settings.json preference.
+The tray menu provides the virtual-only setting, manual restoration, mode capture, diagnostics folder, an opt-in **Start with Windows** toggle, and Exit. Startup is disabled by default for the parallel preview and stored as an HKCU Run entry named StreamDisplayManagerNative, pointing to the installed executable. This survives normal in-place MSI upgrades because the installed path is stable. The native tray refuses to register startup if the managed application's StreamDisplayManager Run entry is present. Disable the managed Startup entry or uninstall the managed version first to prevent an unpredictable first-wins mutex race. Turning the toggle off removes the native Run entry. Before uninstalling the native preview entirely, turn its startup toggle off to avoid a stale registry startup entry. The native app reads the existing %LOCALAPPDATA%\\StreamDisplayManager\\settings.json preference.
 
 Standalone command-line arguments:
 
