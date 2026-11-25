@@ -85,7 +85,6 @@ if ($launchTarget -notmatch '\[#MainExe\]') {
     throw "Post-install launch does not target the installed EXE: '$launchTarget'"
 }
 $launchDefault = [string](Read-MsiProperty 'LAUNCHAFTERINSTALL')
-if ($launchDefault -notmatch '^\s*1\s*
-) { throw 'Launch-after-install default is disabled' }
+if ($launchDefault -notmatch '^\s*1\s*$') { throw 'Launch-after-install default is disabled' }
 
 Write-Host "Validated MSI: $name $actual, per-user, stable upgrade identity."
