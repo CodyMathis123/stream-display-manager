@@ -40,6 +40,21 @@ jobs:
           $p = Start-Process -FilePath $app -ArgumentList '--self-test' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Native self-test failed: $($p.ExitCode)" }
           if ((Get-Item $app).Length -gt 4000000) { throw 'Native executable unexpectedly large' }
+      - name: Record idle native memory footprint
+        shell: pwsh
+        run: |
+          $app = (Resolve-Path native-output/StreamDisplayManager.Native.exe).Path
+          $proc = Start-Process -FilePath $app -PassThru
+          try {
+            Start-Sleep -Seconds 6
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "Native tray unexpectedly exited with code $($proc.ExitCode)" }
+            Write-Host ("Native idle working set: {0:N2} MiB" -f ($proc.WorkingSet64 / 1MB))
+            Write-Host ("Native idle private bytes: {0:N2} MiB" -f ($proc.PrivateMemorySize64 / 1MB))
+            Write-Host ("Native process CPU time: {0:N3} sec" -f $proc.TotalProcessorTime.TotalSeconds)
+          } finally {
+            if (!$proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
       - name: Setup .NET for WiX 5 packaging
         uses: actions/setup-dotnet@v4
         with:
