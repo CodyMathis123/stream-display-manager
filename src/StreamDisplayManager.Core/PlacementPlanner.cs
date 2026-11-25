@@ -99,7 +99,7 @@ public static class PlacementPlanner
                 appId, window.WindowHandle, current.DeviceName, target.DeviceName);
 
         return new(PlacementStatus.WouldMove,
-            "Dry-run only: eligible-looking game window is on the physical monitor.",
+            "Eligible-looking game window is on the physical monitor.",
             appId, window.WindowHandle, current.DeviceName, target.DeviceName);
     }
 }
@@ -172,3 +172,48 @@ public sealed class PlacementPlanStabilizer(TimeSpan minimumDuration)
         _published = null;
     }
 }
+
+
+// DOOM experimental automation gate. DOOM (3017860) only; one attempt per
+// streaming session, and never fight a window already seen on virtual display.
+public sealed class ExperimentalAutoMovePolicy
+{
+    public const long EnabledAppId = 3017860;
+    private int _session = -1;
+    private bool _attempted;
+    private readonly HashSet<string> _previouslyOnTarget = new(StringComparer.OrdinalIgnoreCase);
+
+    public AutoMoveDecision Observe(PlacementPlan plan, int sessionNumber)
+    {
+        if (sessionNumber <= 0 || plan.AppId != EnabledAppId ||
+            string.IsNullOrWhiteSpace(plan.WindowHandle))
+            return new(false, "Not the enabled game or missing identity.");
+
+        if (_session != sessionNumber)
+        {
+            _session = sessionNumber;
+            _attempted = false;
+            _previouslyOnTarget.Clear();
+        }
+
+        if (plan.Status == PlacementStatus.AlreadyOnTarget)
+        {
+            _previouslyOnTarget.Add(plan.WindowHandle);
+            return new(false, "Previously on streaming target; respect subsequent user moves.");
+        }
+
+        if (plan.Status != PlacementStatus.WouldMove)
+            return new(false, "Planner did not find a misplaced window.");
+
+        if (_previouslyOnTarget.Contains(plan.WindowHandle))
+            return new(false, "User may have moved the window; do not fight that.", true);
+
+        if (_attempted)
+            return new(false, "One attempted move per session; no retries.", true);
+
+        _attempted = true; // Mark before native API call.
+        return new(true, "DOOM first observed on the physical monitor.");
+    }
+}
+
+public sealed record AutoMoveDecision(bool ShouldAttempt, string Reason, bool Suppressed = false);
