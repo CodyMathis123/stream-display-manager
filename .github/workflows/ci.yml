@@ -28,6 +28,9 @@ jobs:
         run: dotnet restore StreamDisplayManager.slnx
       - name: Build
         run: dotnet build StreamDisplayManager.slnx --configuration Release --no-restore
+      - name: Validate 16px tray glyph readability
+        shell: pwsh
+        run: ./scripts/Test-Icon.ps1 -IconPath src/StreamDisplayManager.App/Assets/StreamDisplayManager.ico
       - name: Run core specification checks
         run: dotnet run --project tests/StreamDisplayManager.Core.SpecTests --configuration Release --no-build
       - name: Set MSI version

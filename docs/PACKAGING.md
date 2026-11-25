@@ -14,7 +14,7 @@ This project mirrors proven patterns from [SensorDash](https://github.com/CodyMa
 
 ## Reproducible icon
 
-The **single source of truth** is scripts/Generate-StreamDisplayManagerIcon.ps1, inspired by SensorDash's generator. It generates a multi-resolution ICO (16/24/32/48/64/256 px) of a dark background with an overlapping physical monitor and cyan streaming display. The app embeds it as its Windows executable icon, and the MSI references the same asset for the Start Menu shortcut. No externally downloaded image or fonts.
+The **single source of truth** is scripts/Generate-StreamDisplayManagerIcon.ps1, inspired by SensorDash's generator. It generates a multi-resolution ICO (16/24/32/48/64/256 px) of a dark navy disc with one thick cyan monitor outline and a white play triangle. The 16 px and 24 px frames omit the stand to improve legibility. The app embeds it as its Windows executable icon, and the MSI references the same asset for the Start Menu shortcut. A CI contrast test checks the actual embedded 16 px frame for visible cyan, white, and navy. No externally downloaded image or fonts.
 
 ## Development on Windows
 
