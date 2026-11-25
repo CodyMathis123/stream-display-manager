@@ -43,4 +43,4 @@ Because temporary display changes are not saved in Windows' display database, a 
 - CI: .github/workflows/native-ci.yml
 - Compiler: MSVC x64, C++20, /O2 /MT /W4. Installer: WiX 5.
 
-See docs/NATIVE_PREVIEW.md for native implementation details and validation steps. Review device metadata in logs before sharing.
+See docs/NATIVE.md for native implementation details and validation steps. Review device metadata in logs before sharing.
