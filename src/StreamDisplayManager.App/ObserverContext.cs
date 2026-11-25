@@ -15,6 +15,7 @@ internal sealed class ObserverContext : ApplicationContext
     private readonly SteamEvidenceState _steamEvidence = new();
     private readonly SteamLogTailObserver? _steamLog;
     private SessionPhase _sessionPhase = SessionPhase.Desktop;
+    private bool _hadConfirmedVirtualSession;
     private string? _lastSteamLogGap;
     private string? _previousSerializedSnapshot;
     private readonly TopologyStabilizer _topologyStabilizer =
@@ -170,10 +171,18 @@ internal sealed class ObserverContext : ApplicationContext
                 _sessionPhase = decision.NextPhase;
             }
 
-            // Stale start markers must not authorize a later virtual display
-            // appearing after we observed the physical desktop return.
-            if (_sessionPhase == SessionPhase.Desktop && stable && !virtualActive)
+            // Do not clear a fresh Steam start merely because it arrives before
+            // SudoVDA attaches. Clear a stale start only after a previously
+            // confirmed stream has returned to a stable physical desktop.
+            if (_sessionPhase == SessionPhase.Streaming)
+                _hadConfirmedVirtualSession = true;
+
+            if (_sessionPhase == SessionPhase.Desktop && stable && !virtualActive &&
+                _hadConfirmedVirtualSession)
+            {
                 _steamEvidence.ResetAfterDetachedVirtualDisplay();
+                _hadConfirmedVirtualSession = false;
+            }
 
             _tray.Text = !stable
                 ? "Stream Display Manager: topology changing"
