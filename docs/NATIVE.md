@@ -102,3 +102,37 @@ the user's Windows account settings. Review the exported file before sharing.
 No Windows Event Log source, administrative registration, database, web
 viewer, background service or game-specific log folders are introduced.
 Log-writing failures are best effort and must never prevent display recovery.
+
+## Secondary SudoVDA isolation: iterative CCD candidate (2026-11-25)
+
+A verified error-87 report affected docked 4K sessions where the physical
+3440×1440 display was primary and SudoVDA was already active at 3840×2160
+as a secondary display. The older handheld tests had SudoVDA as primary.
+
+For every newly confirmed stream, the utility now selects the sole already
+active SudoVDA CCD source and constructs a compact **temporary** single-path
+candidate. Its copied source mode retains the active width and height and is
+rebased to desktop origin (0,0); referenced source and target modes are
+remapped to a compact array, and desktop-image layout is recalculated.
+The original CCD paths and modes are **never mutated**; they are saved in
+the existing recovery journal only after candidate validation succeeds.
+
+If the explicit active-mode candidate fails Windows `SDC_VALIDATE`, the
+utility tests one mode-agnostic candidate and applies it only when that
+variant also validates. The fallback uses Windows' best-mode selection and
+**might not preserve the client's desired 4K resolution**; the resulting
+active SudoVDA mode must be checked in diagnostics.
+
+The tray emits one structured `display_switch` result per attempt with
+`stage` (e.g. `validate-explicit`, `validate-auto`, `apply`, `verify`),
+original virtual source position, width/height, mode-plan used, validation
+error codes and whether a journal was written. No raw CCD identifiers are
+exported. If apply fails or virtual-only verification fails, the existing
+restoration path is invoked. Display changes are never saved to the Windows
+display database. The switch remains attempted only once per Steam session
+and repair cooldowns are unchanged.
+
+**Real hardware validation required:** Confirm 4K secondary-to-virtual-only
+switch, actual output mode and game selectable modes, reconnect, and physical
+desktop recovery. Unit tests cover pure candidate generation only; Windows
+CI cannot emulate genuine SudoVDA/Steam behavior.

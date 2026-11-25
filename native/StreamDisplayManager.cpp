@@ -84,12 +84,29 @@ void Tick() {
         } else Log("display_restore","pending-retry");
         break;
     case sdm::Action::Switch: {
-        LONG status=sdm::SwitchVirtualOnly(journal);
+        sdm::SwitchDiagnostics diagnostics{};
+        LONG status=sdm::SwitchVirtualOnly(journal,&diagnostics);
+        // Explain CCD failures without raw adapter IDs/device IDs or a
+        // sensitive copy of the saved original desktop configuration.
+        const std::string fields=
+            "\"win32Error\":"+std::to_string(status)+
+            ",\"stage\":\""+sdm::Json(diagnostics.stage)+"\""+
+            ",\"modePlan\":\""+sdm::Json(diagnostics.modePlan)+"\""+
+            ",\"explicitValidateError\":"+std::to_string(diagnostics.explicitValidateError)+
+            ",\"fallbackValidateError\":"+std::to_string(diagnostics.fallbackValidateError)+
+            ",\"sourceX\":"+std::to_string(diagnostics.sourceX)+
+            ",\"sourceY\":"+std::to_string(diagnostics.sourceY)+
+            ",\"sourceWidth\":"+std::to_string(diagnostics.sourceWidth)+
+            ",\"sourceHeight\":"+std::to_string(diagnostics.sourceHeight)+
+            ",\"virtualModeAware\":"+(diagnostics.virtualAware?"true":"false")+
+            ",\"beforePaths\":"+std::to_string(diagnostics.beforePaths)+
+            ",\"beforeModes\":"+std::to_string(diagnostics.beforeModes)+
+            ",\"candidateModes\":"+std::to_string(diagnostics.candidateModes)+
+            ",\"journalWritten\":"+(diagnostics.journalWritten?"true":"false");
         if(status==ERROR_SUCCESS) {
-            Log("display_switch","virtual-only-active",
-                "\"session\":"+std::to_string(steamObserver.session));
+            Log("display_switch","virtual-only-active",fields);
             sdm::CaptureModes(logdir,sdm::Screens(true),"virtual-only");
-        } else Log("display_switch","failed","\"win32Error\":"+std::to_string(status));
+        } else Log("display_switch","failed",fields);
         break;
     }
     case sdm::Action::Repair: {

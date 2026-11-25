@@ -9,6 +9,7 @@
 #include "../native/SessionPolicy.h"
 #include "../native/SteamTail.h"
 #include "../native/Diagnostics.h"
+#include "../native/CcdCandidate.h"
 
 #define CHECK(expr) do { if(!(expr)) { std::cerr << "FAIL " << __LINE__ << ": " #expr "\n"; return 1; } } while(0)
 
@@ -240,8 +241,107 @@ int DiagnosticTests() {
     return 0;
 }
 
+
+int CandidateTests() {
+    using namespace sdm;
+    Ccd before;
+    before.paths.resize(2);
+    before.modes.resize(5);
+    const LUID physicalAdapter{11,1};
+    const LUID virtualAdapter{22,2};
+    auto& physical=before.paths[0];
+    physical.flags=DISPLAYCONFIG_PATH_ACTIVE|DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE;
+    physical.sourceInfo.adapterId=physicalAdapter;
+    physical.sourceInfo.id=0;
+    physical.sourceInfo.sourceModeInfoIdx=0;
+    physical.targetInfo.adapterId=physicalAdapter;
+    physical.targetInfo.id=0;
+    physical.targetInfo.targetModeInfoIdx=1;
+    physical.targetInfo.desktopModeInfoIdx=DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID;
+
+    auto& virtualPath=before.paths[1];
+    virtualPath.flags=DISPLAYCONFIG_PATH_ACTIVE|DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE;
+    virtualPath.sourceInfo.adapterId=virtualAdapter;
+    virtualPath.sourceInfo.id=1;
+    virtualPath.sourceInfo.sourceModeInfoIdx=2;
+    virtualPath.targetInfo.adapterId=virtualAdapter;
+    virtualPath.targetInfo.id=4;
+    virtualPath.targetInfo.targetModeInfoIdx=3;
+    virtualPath.targetInfo.desktopModeInfoIdx=4;
+
+    before.modes[0].infoType=DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
+    before.modes[0].adapterId=physicalAdapter;
+    before.modes[0].id=0;
+    before.modes[0].sourceMode.width=3440;
+    before.modes[0].sourceMode.height=1440;
+    before.modes[0].sourceMode.position={0,0};
+
+    before.modes[1].infoType=DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
+    before.modes[1].adapterId=physicalAdapter;
+    before.modes[1].id=0;
+
+    before.modes[2].infoType=DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
+    before.modes[2].adapterId=virtualAdapter;
+    before.modes[2].id=1;
+    before.modes[2].sourceMode.width=3840;
+    before.modes[2].sourceMode.height=2160;
+    before.modes[2].sourceMode.position={3440,120};
+
+    before.modes[3].infoType=DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
+    before.modes[3].adapterId=virtualAdapter;
+    before.modes[3].id=4;
+
+    before.modes[4].infoType=DISPLAYCONFIG_MODE_INFO_TYPE_DESKTOP_IMAGE;
+    before.modes[4].adapterId=virtualAdapter;
+    before.modes[4].id=4;
+
+    Ccd only; CcdCandidateInfo info;
+    CHECK(BuildIsolatedCandidate(before,1,false,only,info)==ERROR_SUCCESS);
+    CHECK(info.virtualAware && !info.automaticModes);
+    CHECK(info.sourceX==3440 && info.sourceY==120);
+    CHECK(info.width==3840 && info.height==2160);
+    CHECK(only.paths.size()==1 && only.modes.size()==2);
+    CHECK(only.paths[0].sourceInfo.sourceModeInfoIdx==0);
+    CHECK(only.paths[0].targetInfo.targetModeInfoIdx==1);
+    CHECK(only.paths[0].targetInfo.desktopModeInfoIdx==DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID);
+    CHECK(only.modes[0].sourceMode.position.x==0);
+    CHECK(only.modes[0].sourceMode.position.y==0);
+    CHECK(only.modes[0].sourceMode.width==3840);
+    CHECK(only.modes[0].sourceMode.height==2160);
+    CHECK(only.modes[1].infoType==DISPLAYCONFIG_MODE_INFO_TYPE_TARGET);
+    // The journal input MUST NOT be modified by candidate construction.
+    CHECK(before.modes[2].sourceMode.position.x==3440);
+    CHECK(before.paths[1].sourceInfo.sourceModeInfoIdx==2);
+    CHECK(before.paths[1].targetInfo.desktopModeInfoIdx==4);
+
+    Ccd autoMode;CcdCandidateInfo autoInfo;
+    CHECK(BuildIsolatedCandidate(before,1,true,autoMode,autoInfo)==ERROR_SUCCESS);
+    CHECK(autoInfo.automaticModes && autoMode.paths.size()==1 && autoMode.modes.empty());
+    CHECK(autoMode.paths[0].sourceInfo.sourceModeInfoIdx==
+        DISPLAYCONFIG_PATH_SOURCE_MODE_IDX_INVALID);
+    CHECK(autoMode.paths[0].sourceInfo.cloneGroupId==
+        DISPLAYCONFIG_PATH_CLONE_GROUP_INVALID);
+    CHECK(autoMode.paths[0].targetInfo.targetModeInfoIdx==
+        DISPLAYCONFIG_PATH_TARGET_MODE_IDX_INVALID);
+    CHECK(autoMode.paths[0].targetInfo.desktopModeInfoIdx==
+        DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID);
+
+    // Malformed or ambiguous mode references must fail closed, not mutate
+    // any real display or speculate about unreferenced mode entries.
+    auto invalid=before;
+    invalid.paths[1].sourceInfo.sourceModeInfoIdx=999;
+    CHECK(BuildIsolatedCandidate(invalid,1,false,only,info)==ERROR_INVALID_DATA);
+    invalid=before;
+    invalid.modes[3].id=5; // target ID disagrees with selected path
+    CHECK(BuildIsolatedCandidate(invalid,1,false,only,info)==ERROR_INVALID_DATA);
+    CHECK(BuildIsolatedCandidate(before,2,false,only,info)==ERROR_INVALID_DATA);
+    before.paths.resize(1);
+    CHECK(BuildIsolatedCandidate(before,0,false,only,info)==ERROR_INVALID_DATA);
+    return 0;
+}
+
 int main() {
-    if(PolicyTests()!=0 || RestoreFallbackTests()!=0 || TailTests()!=0 || DiagnosticTests()!=0)return 1;
-    std::cout<<"Native reliability, Steam tail and diagnostic rotation tests passed\n";
+    if(PolicyTests()!=0 || RestoreFallbackTests()!=0 || TailTests()!=0 || DiagnosticTests()!=0 || CandidateTests()!=0)return 1;
+    std::cout<<"Native reliability, Steam tail, diagnostic rotation and CCD candidate tests passed\n";
     return 0;
 }
