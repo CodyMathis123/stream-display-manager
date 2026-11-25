@@ -1,0 +1,14 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <StreamDisplayManagerVersion Condition="'$(StreamDisplayManagerVersion)' == ''">1.0.0</StreamDisplayManagerVersion>
+    <OutputName>StreamDisplayManager-Setup-$(StreamDisplayManagerVersion)-x64</OutputName>
+    <DefineConstants>StreamDisplayManagerVersion=$(StreamDisplayManagerVersion);PublishDir=$(MSBuildThisFileDirectory)..\native-output;IconPath=$(MSBuildThisFileDirectory)..\native\Assets\StreamDisplayManager.ico</DefineConstants>
+    <OutputPath>$(MSBuildThisFileDirectory)..\installer-output\</OutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="StreamDisplayManager.wxs" />
+  </ItemGroup>
+</Project>

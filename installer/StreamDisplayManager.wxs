@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Stream Display Manager"
+           Manufacturer="CodyMathis"
+           Version="$(var.StreamDisplayManagerVersion)"
+           Scope="perUser"
+           UpgradeCode="9850E424-36AF-424A-B3EA-FA8DAD29E174">
+    <SummaryInformation Description="Native Win32 Stream Display Manager" />
+    <MajorUpgrade DowngradeErrorMessage="A newer Stream Display Manager version is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="ARPCOMMENTS" Value="Native Win32 tray. Starts at login; configurable in tray menu." />
+    <Icon Id="NativeIcon.ico" SourceFile="$(var.IconPath)" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLFOLDER" Name="StreamDisplayManager">
+        <Component Id="NativeExecutable" Guid="62F72BAF-B457-407B-9EFA-A8102EB585B3">
+          <File Id="NativeExe" Source="$(var.PublishDir)\StreamDisplayManager.Native.exe">
+            <Shortcut Id="StartMenuShortcut"
+                      Directory="ProgramMenuFolder"
+                      Name="Stream Display Manager"
+                      Description="Steam Remote Play display management"
+                      Advertise="no"
+                      Icon="NativeIcon.ico"
+                      WorkingDirectory="INSTALLFOLDER" />
+          </File>
+          <RegistryValue Root="HKCU" Key="Software\CodyMathis\StreamDisplayManager"
+                         Name="InstalledExecutable" Type="string"
+                         Value="[INSTALLFOLDER]StreamDisplayManager.Native.exe" KeyPath="yes" />
+          <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        </Component>
+        <Component Id="NativeAutoStart" Guid="E96E617F-39A9-4219-82F0-B8B62EF212CC">
+          <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                         Name="StreamDisplayManagerNative" Type="string"
+                         Value="&quot;[INSTALLFOLDER]StreamDisplayManager.Native.exe&quot;"
+                         KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Complete" Title="Stream Display Manager" Level="1">
+      <ComponentRef Id="NativeExecutable" />
+      <ComponentRef Id="NativeAutoStart" />
+    </Feature>
+  </Package>
+</Wix>

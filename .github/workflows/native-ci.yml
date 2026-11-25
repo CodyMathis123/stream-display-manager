@@ -1,0 +1,119 @@
+name: Windows native build, tests and MSI
+on:
+  push:
+    branches:
+      - feature/native-cpp-tray-and-display-modes
+      - Production
+  pull_request:
+    branches:
+      - Production
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate branded icon
+        shell: pwsh
+        run: |
+          ./scripts/Generate-StreamDisplayManagerIcon.ps1 -OutputPath native/Assets/StreamDisplayManager.ico
+      - name: Validate 16px tray icon
+        shell: pwsh
+        run: ./scripts/Test-Icon.ps1 -IconPath native/Assets/StreamDisplayManager.ico
+      - name: Compile native Win32 executable (same MSVC strategy as SensorDash)
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $install = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$install) { throw 'MSVC x64 tools missing' }
+          $vcvars = Join-Path $install 'VC/Auxiliary/Build/vcvars64.bat'
+          New-Item -ItemType Directory -Force -Path native-output | Out-Null
+          $command = 'call "' + $vcvars + '" && rc /nologo /fo native-output\StreamDisplayManager.res native\StreamDisplayManager.rc && cl /nologo /std:c++20 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /Fe:native-output\StreamDisplayManager.Native.exe native\StreamDisplayManager.cpp native-output\StreamDisplayManager.res user32.lib shell32.lib advapi32.lib'
+          & cmd.exe /d /c $command
+          if ($LASTEXITCODE -ne 0) { throw 'Native C++ build failed' }
+      - name: Native self-test (no display changes)
+        shell: pwsh
+        run: |
+          $app = (Resolve-Path native-output/StreamDisplayManager.Native.exe).Path
+          $p = Start-Process -FilePath $app -ArgumentList '--self-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Native self-test failed: $($p.ExitCode)" }
+          if ((Get-Item $app).Length -gt 4000000) { throw 'Native executable unexpectedly large' }
+      - name: Record idle native memory footprint
+        shell: pwsh
+        run: |
+          $app = (Resolve-Path native-output/StreamDisplayManager.Native.exe).Path
+          $proc = Start-Process -FilePath $app -PassThru
+          try {
+            Start-Sleep -Seconds 6
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "Native tray unexpectedly exited with code $($proc.ExitCode)" }
+            Write-Host ("Native idle working set: {0:N2} MiB" -f ($proc.WorkingSet64 / 1MB))
+            Write-Host ("Native idle private bytes: {0:N2} MiB" -f ($proc.PrivateMemorySize64 / 1MB))
+            Write-Host ("Native process CPU time: {0:N3} sec" -f $proc.TotalProcessorTime.TotalSeconds)
+          } finally {
+            if (!$proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+      - name: Setup .NET for WiX 5 packaging
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build native application MSI
+        shell: pwsh
+        run: |
+          $version = "1.0.$env:GITHUB_RUN_NUMBER"
+          dotnet build installer/StreamDisplayManager.wixproj -c Release -p:StreamDisplayManagerVersion=$version
+          if ($LASTEXITCODE -ne 0) { throw 'Native MSI failed' }
+          $msis = @(Get-ChildItem installer-output -Filter '*.msi' -Recurse)
+          if ($msis.Count -ne 1) { throw 'Expected exactly one MSI' }
+          Write-Host "Native MSI: $($msis[0].FullName) ($($msis[0].Length) bytes)"
+      - name: Validate packaged native executable and startup registration
+        shell: pwsh
+        run: |
+          $msi = @(Get-ChildItem installer-output -Filter '*.msi' -Recurse | Select-Object -First 1)
+          if ($msi.Count -ne 1) { throw 'Missing MSI for inspection' }
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $database = $installer.OpenDatabase($msi[0].FullName, 0)
+          function Read-MsiRows([string]$sql) {
+            $view = $database.OpenView($sql)
+            $view.Execute()
+            $rows = @()
+            while ($record = $view.Fetch()) {
+              $rows += $record.StringData(1)
+            }
+            $view.Close()
+            return $rows
+          }
+          $files = @(Read-MsiRows 'SELECT FileName FROM File')
+          $registryNames = @(Read-MsiRows 'SELECT Name FROM Registry')
+          if (-not (@($files | Where-Object { $_ -match 'StreamDisplayManager.Native.exe' }).Count -gt 0)) {
+            throw 'MSI does not contain native EXE'
+          }
+          if ($registryNames -notcontains 'StreamDisplayManagerNative') {
+            throw 'Native login startup registry value absent'
+          }
+          if ($registryNames -contains 'StreamDisplayManager') {
+            throw 'Legacy managed startup registry value must not ship'
+          }
+          Write-Host 'Validated native EXE and per-user startup registry entry'
+      - name: Upload native MSI
+        uses: actions/upload-artifact@v7
+        with:
+          name: StreamDisplayManager-MSI
+          path: installer-output/**/*.msi
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload native standalone executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: StreamDisplayManager-Native-EXE
+          path: native-output/StreamDisplayManager.Native.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
