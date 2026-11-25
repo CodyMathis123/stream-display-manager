@@ -1,72 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Stream Display Manager"
            Manufacturer="CodyMathis"
            Version="$(var.StreamDisplayManagerVersion)"
            Scope="perUser"
-           UpgradeCode="3AA12A9B-01AE-47BC-AC6E-02E1BB671583">
-    <SummaryInformation Description="Steam Remote Play display companion for Windows" />
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Stream Display Manager is already installed." />
+           UpgradeCode="9850E424-36AF-424A-B3EA-FA8DAD29E174">
+    <SummaryInformation Description="Native Win32 Stream Display Manager" />
+    <MajorUpgrade DowngradeErrorMessage="A newer Stream Display Manager version is already installed." />
     <MediaTemplate EmbedCab="yes" />
-    <Property Id="ARPCOMMENTS" Value="A per-user tray utility. Steam and SudoVDA are separately installed; this package does not install drivers or Windows services." />
-    <!-- Graceful close only; never forcibly kill games, Steam, or the observer. -->
-    <util:CloseApplication Id="CloseDisplayManager"
-                           Target="StreamDisplayManager.App.exe"
-                           CloseMessage="yes"
-                           EndSessionMessage="yes"
-                           PromptToContinue="no"
-                           RebootPrompt="no"
-                           Timeout="10"
-                           TerminateProcess="0" />
-    <Icon Id="StreamDisplayManagerIcon.ico" SourceFile="$(var.IconPath)" />
-
-    <!-- Launch after a successful interactive install (including major upgrades).
-         Silent deployment and repair/uninstall must never open a tray process.
-         LAUNCHAFTERINSTALL=0 permits an explicit opt-out. -->
-    <Property Id="LAUNCHAFTERINSTALL" Value="1" />
-    <Property Id="WixShellExecTarget" Value="[#MainExe]" />
-    <CustomAction Id="LaunchInstalledApp"
-                  BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
-                  DllEntry="WixShellExec"
-                  Execute="immediate"
-                  Return="ignore"
-                  Impersonate="yes" />
-    <InstallExecuteSequence>
-      <Custom Action="LaunchInstalledApp" After="InstallFinalize"
-              Condition="NOT Installed AND UILevel &gt;= 4 AND LAUNCHAFTERINSTALL = 1" />
-    </InstallExecuteSequence>
-
+    <Property Id="ARPCOMMENTS" Value="Native Win32 tray. Starts at login; configurable in tray menu." />
+    <Icon Id="NativeIcon.ico" SourceFile="$(var.IconPath)" />
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="INSTALLFOLDER" Name="StreamDisplayManager">
-        <Component Id="MainExecutable" Guid="8EBF0BD8-732F-46C5-B9F5-7B24ED40B2D5">
-          <File Id="MainExe" Source="$(var.PublishDir)\StreamDisplayManager.App.exe">
+        <Component Id="NativeExecutable" Guid="62F72BAF-B457-407B-9EFA-A8102EB585B3">
+          <File Id="NativeExe" Source="$(var.PublishDir)\StreamDisplayManager.Native.exe">
             <Shortcut Id="StartMenuShortcut"
                       Directory="ProgramMenuFolder"
                       Name="Stream Display Manager"
-                      Description="Observe Steam Remote Play display sessions"
+                      Description="Steam Remote Play display management"
                       Advertise="no"
-                      Icon="StreamDisplayManagerIcon.ico"
+                      Icon="NativeIcon.ico"
                       WorkingDirectory="INSTALLFOLDER" />
           </File>
-          <!-- Per-user MSI components with non-advertised shortcuts use HKCU key paths. -->
           <RegistryValue Root="HKCU" Key="Software\CodyMathis\StreamDisplayManager"
                          Name="InstalledExecutable" Type="string"
-                         Value="[INSTALLFOLDER]StreamDisplayManager.App.exe" KeyPath="yes" />
+                         Value="[INSTALLFOLDER]StreamDisplayManager.Native.exe" KeyPath="yes" />
           <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
         </Component>
-        <Component Id="AutoStart" Guid="*">
-          <RegistryValue Root="HKCU"
-                         Key="Software\Microsoft\Windows\CurrentVersion\Run"
-                         Name="StreamDisplayManager"
-                         Type="string"
-                         Value="&quot;[INSTALLFOLDER]StreamDisplayManager.App.exe&quot;"
+        <Component Id="NativeAutoStart" Guid="E96E617F-39A9-4219-82F0-B8B62EF212CC">
+          <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                         Name="StreamDisplayManagerNative" Type="string"
+                         Value="&quot;[INSTALLFOLDER]StreamDisplayManager.Native.exe&quot;"
                          KeyPath="yes" />
         </Component>
       </Directory>
     </StandardDirectory>
     <Feature Id="Complete" Title="Stream Display Manager" Level="1">
-      <ComponentRef Id="MainExecutable" />
-      <ComponentRef Id="AutoStart" />
+      <ComponentRef Id="NativeExecutable" />
+      <ComponentRef Id="NativeAutoStart" />
     </Feature>
   </Package>
 </Wix>
