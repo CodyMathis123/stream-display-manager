@@ -16,17 +16,19 @@
 #include <cstdint>
 #include <cstdio>
 #include <tlhelp32.h>
+#include <winver.h>
 #include "DisplayTopology.h"
 #include "SessionPolicy.h"
 #include "SteamTail.h"
 #pragma comment(lib,"user32.lib")
 #pragma comment(lib,"shell32.lib")
 #pragma comment(lib,"advapi32.lib")
+#pragma comment(lib,"version.lib")
 
 namespace {
 constexpr UINT kTrayMessage=WM_APP+20;
 constexpr UINT_PTR kPollTimer=1;
-constexpr UINT kToggle=1001,kRestore=1002,kModes=1003,kLogs=1004,kExit=1005,kStartup=1006;
+constexpr UINT kToggle=1001,kRestore=1002,kModes=1003,kLogs=1004,kExit=1005,kStartup=1006,kAbout=1007;
 HWND hwnd=nullptr;
 NOTIFYICONDATAW icon{};
 std::filesystem::path root,logdir,journal,settings,steamlog;
@@ -291,6 +293,38 @@ void Tick() {
         break;
     }
 }
+std::wstring InstalledFileVersion() {
+    wchar_t path[32768]{};
+    DWORD length=GetModuleFileNameW(nullptr,path,32768);
+    if(!length || length>=32768) return L"Unknown";
+    DWORD ignored=0;
+    DWORD size=GetFileVersionInfoSizeW(path,&ignored);
+    if(!size) return L"Unknown";
+    std::vector<BYTE> info(size);
+    if(!GetFileVersionInfoW(path,0,size,info.data())) return L"Unknown";
+    VS_FIXEDFILEINFO* fixed=nullptr;
+    UINT bytes=0;
+    if(!VerQueryValueW(info.data(),L"\\",reinterpret_cast<LPVOID*>(&fixed),&bytes) ||
+       !fixed || bytes<sizeof(VS_FIXEDFILEINFO) || fixed->dwSignature!=0xFEEF04BD)
+        return L"Unknown";
+    std::wstring result=std::to_wstring(HIWORD(fixed->dwFileVersionMS))+L"."+
+        std::to_wstring(LOWORD(fixed->dwFileVersionMS))+L"."+
+        std::to_wstring(HIWORD(fixed->dwFileVersionLS));
+    WORD revision=LOWORD(fixed->dwFileVersionLS);
+    if(revision) result+=L"."+std::to_wstring(revision);
+    return result;
+}
+void ShowAbout(HWND owner) {
+    const std::wstring message=
+        L"Stream Display Manager\n"
+        L"Version "+InstalledFileVersion()+L"\n\n"
+        L"A lightweight native Windows companion for Steam Remote Play.\n"
+        L"Uses SudoVDA during streaming and restores the physical desktop afterward.\n\n"
+        L"https://github.com/CodyMathis123/stream-display-manager";
+    MessageBoxW(owner,message.c_str(),L"About Stream Display Manager",
+                MB_OK|MB_ICONINFORMATION);
+}
+
 void OpenLogFolder() {
     ShellExecuteW(hwnd,L"open",logdir.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
 }
@@ -303,6 +337,7 @@ void Menu() {
     AppendMenuW(menu,MF_STRING,kLogs,L"Open diagnostics folder");
     AppendMenuW(menu,MF_STRING|(StartupEnabled()?MF_CHECKED:0),kStartup,L"Start with Windows");
     AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+    AppendMenuW(menu,MF_STRING,kAbout,L"About Stream Display Manager...");
     AppendMenuW(menu,MF_STRING,kExit,L"Exit");
     POINT p{};GetCursorPos(&p);SetForegroundWindow(hwnd);
     TrackPopupMenu(menu,TPM_RIGHTBUTTON|TPM_BOTTOMALIGN,p.x,p.y,0,hwnd,nullptr);
@@ -341,6 +376,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
                     L"Stream Display Manager",MB_OK|MB_ICONERROR);
             }
             break;
+        case kAbout: ShowAbout(w);break;
         case kExit: DestroyWindow(w);break;
         }return 0;
     case WM_CLOSE:DestroyWindow(w);return 0;
