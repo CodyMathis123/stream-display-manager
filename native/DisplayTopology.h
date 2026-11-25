@@ -12,6 +12,7 @@
 #include <cwctype>
 #include "SessionPolicy.h"
 #include "CcdCandidate.h"
+#include "VirtualPrimaryCandidate.h"
 
 namespace sdm {
 inline LONG ReadCcd(Ccd& result) {
@@ -85,6 +86,12 @@ inline bool HasPhysical(const std::vector<Screen>& screens) {
 inline bool VirtualOnly(const std::vector<Screen>& screens) {
     return screens.size()==1 && screens.front().isVirtual;
 }
+inline bool IsVirtualPrimaryExtended(const std::vector<Screen>& screens) {
+    return screens.size()==2 && HasPhysical(screens) &&
+        std::any_of(screens.begin(),screens.end(),
+           [](const Screen& s){return s.isVirtual && s.primary;});
+}
+
 
 // Raw CCD snapshot with exact native struct sizes, CRC, and a version marker.
 // Never write persistent Windows display settings. A reboot should normally
@@ -312,6 +319,107 @@ inline LONG SwitchVirtualOnly(const std::filesystem::path& journal,
     diag.stage="verified";
     return ERROR_SUCCESS;
 }
+// The virtual-primary mode leaves BOTH Windows outputs attached, so games
+// can initialize without monitor hot-removal. Only the source origins change.
+// The original entire CCD snapshot is journaled and restored at stream end.
+inline LONG ValidateVirtualPrimary(const Ccd& before,const std::wstring& virtualName,
+                                    Ccd& candidate,SwitchDiagnostics& diag) {
+    diag.modePlan="extended-primary";
+    diag.beforePaths=static_cast<UINT32>(before.paths.size());
+    diag.beforeModes=static_cast<UINT32>(before.modes.size());
+    diag.candidateModes=diag.beforeModes;
+    if(before.paths.size()!=2){
+        diag.stage="expected-two-paths";
+        return ERROR_INVALID_DATA;
+    }
+    size_t vi=before.paths.size();
+    for(size_t i=0;i<before.paths.size();++i) {
+        if(SourceName(before.paths[i].sourceInfo)!=virtualName)continue;
+        if(vi<before.paths.size()){
+            diag.stage="ambiguous-source";return ERROR_INVALID_DATA;
+        }
+        vi=i;
+    }
+    if(vi==before.paths.size()){
+        diag.stage="missing-virtual-path";return ERROR_INVALID_DATA;
+    }
+    VirtualPrimaryCandidateInfo info{};
+    diag.stage="build-extended-primary";
+    LONG status=BuildVirtualPrimaryCandidate(before,vi,candidate,info);
+    if(status)return status;
+    diag.sourceX=info.virtualSourceX;
+    diag.sourceY=info.virtualSourceY;
+    diag.sourceWidth=info.virtualWidth;
+    diag.sourceHeight=info.virtualHeight;
+    diag.virtualAware=info.virtualAware;
+    constexpr UINT32 flags=SDC_USE_SUPPLIED_DISPLAY_CONFIG|
+        SDC_ALLOW_CHANGES|SDC_VIRTUAL_MODE_AWARE;
+    diag.stage="validate-extended-primary";
+    status=SetDisplayConfig(static_cast<UINT32>(candidate.paths.size()),candidate.paths.data(),
+        static_cast<UINT32>(candidate.modes.size()),candidate.modes.data(),flags|SDC_VALIDATE);
+    diag.explicitValidateError=status;
+    return status;
+}
+inline LONG SwitchVirtualPrimary(const std::filesystem::path& journal,
+                                 SwitchDiagnostics* provided=nullptr) {
+    SwitchDiagnostics local{};
+    auto& diag=provided?*provided:local;
+    diag={};diag.modePlan="extended-primary";
+    if(std::filesystem::exists(journal)){
+        diag.stage="journal-already-present";
+        return ERROR_ALREADY_EXISTS;
+    }
+    const auto screens=Screens();
+    if(screens.size()!=2 || !HasPhysical(screens) ||
+       std::count_if(screens.begin(),screens.end(),
+          [](const Screen& s){return s.isVirtual;})!=1){
+        diag.stage="expected-two-displays";return ERROR_INVALID_DATA;
+    }
+    const auto it=std::find_if(screens.begin(),screens.end(),
+        [](const Screen& s){return s.isVirtual;});
+    Ccd before;diag.stage="read-ccd";
+    LONG status=ReadCcd(before);
+    if(status)return status;
+    Ccd candidate;
+    status=ValidateVirtualPrimary(before,it->name,candidate,diag);
+    if(status)return status;
+    diag.stage="write-journal";
+    if(!WriteJournal(journal,before))return ERROR_WRITE_FAULT;
+    diag.journalWritten=true;
+    constexpr UINT32 flags=SDC_USE_SUPPLIED_DISPLAY_CONFIG|
+        SDC_ALLOW_CHANGES|SDC_VIRTUAL_MODE_AWARE;
+    diag.stage="apply-extended-primary";
+    status=SetDisplayConfig(static_cast<UINT32>(candidate.paths.size()),candidate.paths.data(),
+        static_cast<UINT32>(candidate.modes.size()),candidate.modes.data(),flags|SDC_APPLY);
+    if(status){Restore(journal);return status;}
+    diag.stage="verify-extended-primary";
+    if(!IsVirtualPrimaryExtended(Screens())){
+        Restore(journal);return ERROR_INVALID_STATE;
+    }
+    diag.stage="verified";
+    return ERROR_SUCCESS;
+}
+inline LONG RepairVirtualPrimary(const std::filesystem::path& journal){
+    if(!std::filesystem::exists(journal))return ERROR_FILE_NOT_FOUND;
+    const auto screens=Screens();
+    if(screens.size()!=2 || !HasPhysical(screens))return ERROR_INVALID_DATA;
+    const auto it=std::find_if(screens.begin(),screens.end(),
+        [](const Screen& s){return s.isVirtual;});
+    if(it==screens.end())return ERROR_INVALID_DATA;
+    Ccd current;
+    LONG status=ReadCcd(current);
+    if(status)return status;
+    Ccd candidate;SwitchDiagnostics diag;
+    status=ValidateVirtualPrimary(current,it->name,candidate,diag);
+    if(status)return status;
+    constexpr UINT32 flags=SDC_USE_SUPPLIED_DISPLAY_CONFIG|
+        SDC_ALLOW_CHANGES|SDC_VIRTUAL_MODE_AWARE;
+    status=SetDisplayConfig(static_cast<UINT32>(candidate.paths.size()),candidate.paths.data(),
+        static_cast<UINT32>(candidate.modes.size()),candidate.modes.data(),flags|SDC_APPLY);
+    return status?status:
+        (IsVirtualPrimaryExtended(Screens())?ERROR_SUCCESS:ERROR_INVALID_STATE);
+}
+
 inline bool EmergencyExtend() {
     return SetDisplayConfig(0,nullptr,0,nullptr,
         SDC_TOPOLOGY_EXTEND|SDC_APPLY)==ERROR_SUCCESS;
