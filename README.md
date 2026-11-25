@@ -29,9 +29,9 @@ A branded, self-contained Windows x64 application is packaged as a **per-user Wi
 
 ## Experimental DOOM auto-move (enabled by default in feature MSI)
 
-- A confirmed Steam Deck streaming session, stable SudoVDA display, and matching `DOOMTheDarkAges` window on the physical display cause one `SetWindowPos` attempt to the virtual display's current bounds.
-- No tray action required. No repeated forcing if DOOM rejects the API or you subsequently change its display setting. Starfield and RDR2 remain diagnostics-only.
-- Detailed events: `placement_plan`, `move_attempt`, `move_result`, and delayed `move_verification`; rejected/ignored attempts can be diagnosed from the saved JSONL.
+- A confirmed Steam Deck streaming session, stable SudoVDA display, and matching `DOOMTheDarkAges` window on the physical display cause an initial `SetWindowPos` move to the virtual display. If two later observations verify that move, and the same HWND returns to the physical display (as DOOM did after its intro cutscenes), **one follow-up correction** is attempted.
+- No tray action required. **At most two moves per Steam session**, no third attempt, and no follow-up unless the first was verified. If DOOM started correctly on SudoVDA, moving it away later does not trigger automation. After an app-owned first move, the single follow-up can also override a manual relocation, so this remains an experimental build. Starfield and RDR2 remain diagnostics-only.
+- Detailed events: `placement_plan`, `move_attempt` (numbered 1 or 2), `move_result`, delayed `move_verification`, and `move_owned_confirmation`. These distinguish a successful native move from DOOM subsequently resetting its display at the menu.
 - **Prototype limitation:** an exclusive-fullscreen game may ignore Win32 placement. A crash-safe restoration journal is not implemented. Keep access to the host's physical monitor and use DOOM's display menu if needed. This build is not a stable release.
 
 ## Phase 1 observer
