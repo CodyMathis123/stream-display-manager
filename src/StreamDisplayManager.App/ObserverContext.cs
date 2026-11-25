@@ -246,7 +246,7 @@ internal sealed class ObserverContext : ApplicationContext
                         _steamEvidence.SessionNumber,
                         identityConfidence = "provisional-process-rule",
                         executorEnabled = experimentalExecutor,
-                        autoDecision.Reason,
+                        autoMoveReason = autoDecision.Reason,
                         autoDecision.ShouldAttempt
                     });
 

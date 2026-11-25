@@ -179,11 +179,11 @@ public sealed class PlacementPlanStabilizer(TimeSpan minimumDuration)
 public sealed class ExperimentalAutoMovePolicy
 {
     public const long EnabledAppId = 3017860;
-    private int _session = -1;
+    private long _session = -1;
     private bool _attempted;
     private readonly HashSet<string> _previouslyOnTarget = new(StringComparer.OrdinalIgnoreCase);
 
-    public AutoMoveDecision Observe(PlacementPlan plan, int sessionNumber)
+    public AutoMoveDecision Observe(PlacementPlan plan, long sessionNumber)
     {
         if (sessionNumber <= 0 || plan.AppId != EnabledAppId ||
             string.IsNullOrWhiteSpace(plan.WindowHandle))
