@@ -18,8 +18,19 @@ function Invoke-Msi([string] $Arguments, [string] $Log) {
     $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList "$Arguments /qn /norestart /l*v $quotedLog" -Wait -PassThru
     if ($p.ExitCode -ne 0) {
         if (Test-Path $Log) {
-            Write-Host 'MSI diagnostic log (last 80 lines):'
-            Get-Content $Log -Tail 80 | ForEach-Object { Write-Host $_ }
+            Write-Host 'MSI diagnostic error context:'
+            $lines = @(Get-Content $Log)
+            $matches = @(for($i=0;$i -lt $lines.Count;$i++) {
+                if($lines[$i] -match 'Return value 3|error 1[0-9]{3}|failed|Wix4CloseApplications|LaunchInstalledTray|CloseRunningTray|WixUnelevatedShellExec') { $i }
+            })
+            foreach($i in @($matches | Select-Object -Last 14)) {
+                $start=[Math]::Max(0,$i-3)
+                $end=[Math]::Min($lines.Count-1,$i+3)
+                for($n=$start;$n -le $end;$n++) { Write-Host $lines[$n] }
+                Write-Host '---'
+            }
+            Write-Host 'MSI diagnostic log (last 20 lines):'
+            Get-Content $Log -Tail 20 | ForEach-Object { Write-Host $_ }
         }
         throw "MSI failed with exit code $($p.ExitCode)"
     }
