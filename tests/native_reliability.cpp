@@ -98,6 +98,28 @@ void Append(const std::filesystem::path& p,const std::string& str) {
 void Replace(const std::filesystem::path& p,const std::string& str) {
     std::ofstream f(p,std::ios::binary|std::ios::trunc);f<<str;f.close();
 }
+int RestoreFallbackTests() {
+    using namespace sdm;
+    int saves=0, databases=0, checks=0;
+    CHECK(RestoreWithFallback([&](){++saves;return true;},
+        [&](){++databases;return true;}, [&](){++checks;return true;}));
+    CHECK(saves==1 && databases==0 && checks==1);
+    saves=databases=checks=0;
+    CHECK(RestoreWithFallback([&](){++saves;return false;},
+        [&](){++databases;return true;}, [&](){++checks;return true;}));
+    CHECK(saves==1 && databases==1 && checks==1);
+    saves=databases=checks=0;
+    // A success return from SetDisplayConfig without a physical display is
+    // not accepted; the saved-database fallback must still be attempted.
+    CHECK(RestoreWithFallback([&](){++saves;return true;},
+        [&](){++databases;return true;}, [&](){return ++checks==2;}));
+    CHECK(saves==1 && databases==1 && checks==2);
+    saves=databases=checks=0;
+    CHECK(!RestoreWithFallback([&](){++saves;return false;},
+        [&](){++databases;return false;}, [&](){++checks;return true;}));
+    CHECK(saves==1 && databases==1 && checks==0);
+    return 0;
+}
 int TailTests() {
     using namespace sdm;
     auto dir=std::filesystem::temp_directory_path()/
@@ -150,7 +172,7 @@ int TailTests() {
     return 0;
 }
 int main() {
-    if(PolicyTests()!=0 || TailTests()!=0)return 1;
+    if(PolicyTests()!=0 || RestoreFallbackTests()!=0 || TailTests()!=0)return 1;
     std::cout<<"Native reliability policy and Steam tail tests passed\n";
     return 0;
 }
