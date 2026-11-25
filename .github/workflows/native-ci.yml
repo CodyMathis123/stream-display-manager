@@ -41,7 +41,7 @@ jobs:
           if (!$install) { throw 'MSVC x64 tools missing' }
           $vcvars = Join-Path $install 'VC/Auxiliary/Build/vcvars64.bat'
           New-Item -ItemType Directory -Force -Path native-output | Out-Null
-          $command = 'call "' + $vcvars + '" && rc /nologo /i native-output /fo native-output\StreamDisplayManager.res native\StreamDisplayManager.rc && cl /nologo /std:c++20 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /Fe:native-output\StreamDisplayManager.Native.exe native\StreamDisplayManager.cpp native-output\StreamDisplayManager.res user32.lib shell32.lib advapi32.lib'
+          $command = 'call "' + $vcvars + '" && rc /nologo /i native-output /fo native-output\StreamDisplayManager.res native\StreamDisplayManager.rc && cl /nologo /std:c++20 /O2 /MT /EHsc /W4 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /Fe:native-output\StreamDisplayManager.Native.exe native\StreamDisplayManager.cpp native\AppRuntime.cpp native\SteamObserver.cpp native-output\StreamDisplayManager.res user32.lib shell32.lib advapi32.lib'
           & cmd.exe /d /c $command
           if ($LASTEXITCODE -ne 0) { throw 'Native C++ build failed' }
       - name: Verify Windows EXE file and product versions
