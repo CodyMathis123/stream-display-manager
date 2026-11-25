@@ -25,6 +25,7 @@ internal static class GameWindowMover
         var outcome = new GameWindowMoveResult
         {
             AttemptNumber = attemptNumber,
+            AppId = plan.AppId,
             WindowHandle = plan.WindowHandle ?? "",
             SourceDisplay = plan.SourceDisplay ?? "",
             TargetDisplay = plan.TargetDisplay ?? "",
@@ -206,6 +207,7 @@ internal static class GameWindowMover
 internal sealed record GameWindowMoveResult
 {
     public int AttemptNumber { get; init; }
+    public long? AppId { get; init; }
     public string WindowHandle { get; init; } = "";
     public uint ProcessId { get; init; }
     public string SourceDisplay { get; init; } = "";
