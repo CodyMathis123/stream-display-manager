@@ -2,7 +2,7 @@
 
 A small Windows user-session companion for reliable game streaming across physical and virtual displays.
 
-**Status:** Phase 2C experimental: automatic one-shot window relocation for DOOM: The Dark Ages during a confirmed Steam/SudoVDA stream. All other games remain read-only. It never changes physical/virtual display topology.
+**Status:** Phase 2C experimental: automatic game-window placement during confirmed Steam/SudoVDA streaming. Works with recognized games and other installed Steam games whose running executables can be matched to their Steam installation folders. Never changes display topology.
 
 ## Intended experience
 
@@ -14,7 +14,7 @@ A small Windows user-session companion for reliable game streaming across physic
 - Keep the physical display enabled during streaming.
 - Fail safely when Steam, Windows, the virtual driver, or a game behaves unexpectedly.
 
-Steam owns virtual display creation and streaming; the app observes Steam/Windows and now experimentally attempts to move only DOOM's game window if it first opens on the physical monitor.
+Steam owns virtual display creation and streaming. The app observes Windows and Steam, identifies the streamed game's window, and experimentally corrects its placement on SudoVDA when necessary.
 
 ## Architecture
 
@@ -27,16 +27,18 @@ Steam owns virtual display creation and streaming; the app observes Steam/Window
 
 A branded, self-contained Windows x64 application is packaged as a **per-user WiX 5 MSI** from CI. It installs a Start Menu shortcut and registers user-login startup; it never installs SudoVDA, a service, or kernel drivers. The MSI and icon are generated on Windows CI; see [packaging and smoke tests](docs/PACKAGING.md). Developer MSI builds are unsigned and should be installed only after reviewing CI and smoke-test results.
 
-## Experimental DOOM auto-move (enabled by default in feature MSI)
+## Experimental automatic Steam game placement
 
-- A confirmed Steam Deck streaming session, stable SudoVDA display, and matching `DOOMTheDarkAges` window on the physical display cause an initial `SetWindowPos` move to the virtual display. If two later observations verify that move, and the same HWND returns to the physical display (as DOOM did after its intro cutscenes), **one follow-up correction** is attempted.
-- No tray action required. **At most two moves per Steam session**, no third attempt, and no follow-up unless the first was verified. If DOOM is ever observed on the physical monitor during a confirmed streaming session, it is eligible for correction regardless of earlier placement. This prototype deliberately does **not** distinguish a manual relocation from DOOM resetting its display; the two-attempt limit still applies. Starfield and RDR2 remain diagnostics-only.
-- Detailed events: `placement_plan`, `move_attempt` (numbered 1 or 2), `move_result`, delayed `move_verification`, and `move_owned_confirmation`. These distinguish a successful native move from DOOM subsequently resetting its display at the menu.
-- **Prototype limitation:** an exclusive-fullscreen game may ignore Win32 placement. A crash-safe restoration journal is not implemented. Keep access to the host's physical monitor and use DOOM's display menu if needed. This build is not a stable release.
+- Requires a confirmed Steam Remote Play session, stable SudoVDA topology, and an identifiable game window on the physical monitor.
+- Identification is general: known App ID-to-process rules for DOOM, Starfield and RDR2, plus executable-path matching against the active Steam App ID's installed game directory (including additional Steam library folders). When identification fails or windows are ambiguous, the app records the reason and does not move unrelated windows.
+- The same SetWindowPos relocation runs for all eligible games. One initial correction, plus **one follow-up** if the first was independently verified on SudoVDA and the same window/PID returns to physical. No further attempts in that stream. No tray action.
+- Log events: game_identity; placement_plan with PID/process and identity source; move_attempt with attempt number, source/target current resolutions and window style; move_result with API/error and immediate geometry; delayed move_verification; move_owned_confirmation; move_skipped; move_suppressed.
+- **Critical limitation:** changing Windows window coordinates does not change the monitor a game selected internally or its resolution options. DOOM may display on SudoVDA while its settings still say Dell and cap resolution at Dell's maximum (3440×1440). The game's own selected display may still need changing to offer 4K; SudoVDA also needs the requested mode configured.
+- Multiple candidate game windows are not guessed; some exclusive fullscreen games may ignore movement, and there is no crash-safe restore journal yet. Keep the host physical display accessible. This is a feature-branch experiment, not a stable release.
 
 ## Phase 1 observer
 
-The first implementation targets Windows 10/11 with .NET 10 and runs inside the logged-on interactive user session, rather than as a Windows service. It captures display and game-window observations to local JSONL logs. It does not alter monitor configurations. DOOM's experimental game-window move is the only mutation in this feature-branch build.
+The first implementation targets Windows 10/11 with .NET 10 and runs inside the logged-on interactive user session, rather than as a Windows service. It captures display and game-window observations to local JSONL logs. It does not alter monitor configurations. Game-window relocation with SetWindowPos is the only mutation in this feature-branch build.
 
 When the Phase 1 app is available, use a Windows machine with .NET 10 SDK:
 
@@ -49,4 +51,4 @@ Logs will be written beneath %LOCALAPPDATA%/StreamDisplayManager/logs. Do not up
 
 ## Contributing
 
-Work on feature branches and use pull requests into Production. Do not change display topology by default. Experiment with window placement only on the designated test game and log all native outcomes.
+Work on feature branches and use pull requests into Production. Do not change display topology by default. Keep game identification and no-guessing preflight checks for window movement, and log all native outcomes.
