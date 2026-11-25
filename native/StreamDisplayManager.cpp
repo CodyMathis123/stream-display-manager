@@ -1,7 +1,4 @@
-// Stream Display Manager native Win32 preview.
-// Shares the existing settings.json and recovery journal semantics with the
-// managed build, but does not read managed binary display-restore.json.
-// Only one implementation may run in a user session at a time.
+// Stream Display Manager native Win32 application. No CLR or WinForms.
 #define UNICODE
 #define _UNICODE
 #define WIN32_LEAN_AND_MEAN
@@ -144,10 +141,6 @@ bool SetStartup(bool turnOn) {
     if(result!=ERROR_SUCCESS){Log("startup","registry-write-failed","\"error\":"+std::to_string(result));return false;}
     Log("startup",turnOn?"enabled":"disabled");
     return true;
-}
-bool HasManagedStartup() {
-    std::wstring value;
-    return ReadRunValue(L"StreamDisplayManager",value);
 }
 
 std::filesystem::path SteamLogPath() {
@@ -364,10 +357,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
         case kLogs:OpenLogFolder();break;
         case kStartup:
             if(StartupEnabled())SetStartup(false);
-            else if(HasManagedStartup()){
-                MessageBoxW(w,L"The managed .NET version is still registered to start with Windows.\\n\\nDisable its Startup entry or uninstall it before enabling native startup, so the two variants do not compete for the same session.",
-                    L"Stream Display Manager",MB_OK|MB_ICONINFORMATION);
-            } else if(!SetStartup(true)){
+            else if(!SetStartup(true)){
                 MessageBoxW(w,L"Could not configure native startup. See native-events.jsonl for details.",
                     L"Stream Display Manager",MB_OK|MB_ICONERROR);
             }
@@ -387,8 +377,7 @@ void Prepare() {
     root=LocalFolder();logdir=root/L"logs";
     std::filesystem::create_directories(logdir);
     settings=root/L"settings.json";
-    // Native and managed builds cannot safely deserialize each other's
-    // snapshots. This is a dedicated native recovery journal.
+    // Native journal contains original Windows display configuration.
     journal=root/L"display-native-restore.bin";
 }
 } // namespace
@@ -409,7 +398,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int){
     if(wcsstr(command,L"--extend"))
         return sdm::EmergencyExtend()?0:1;
 
-    // Same mutex as managed observer: cannot run both simultaneously.
+    // Single instance per logged-on user.
     HANDLE singleton=CreateMutexW(nullptr,TRUE,L"Local\\StreamDisplayManager.Observer");
     if(!singleton)return 1;
     if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(singleton);return 0;}
@@ -435,7 +424,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int){
     icon.uFlags=NIF_ICON|NIF_TIP|NIF_MESSAGE;
     icon.uCallbackMessage=kTrayMessage;
     icon.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101));
-    wcscpy_s(icon.szTip,L"Stream Display Manager (native preview)");
+    wcscpy_s(icon.szTip,L"Stream Display Manager");
     Shell_NotifyIconW(NIM_ADD,&icon);
     Log("lifecycle","native-started","\"strategy\":\"virtual-only-or-observe\"");
     MSG msg{};
