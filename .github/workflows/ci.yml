@@ -2,10 +2,14 @@ name: Windows build, tests and MSI
 
 on:
   push:
-    branches: [Production, "feature/**"]
+    branches: [Production]
   pull_request:
     branches: [Production]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
