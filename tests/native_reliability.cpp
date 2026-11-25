@@ -8,6 +8,7 @@
 #include <iostream>
 #include "../native/SessionPolicy.h"
 #include "../native/SteamTail.h"
+#include "../native/Diagnostics.h"
 
 #define CHECK(expr) do { if(!(expr)) { std::cerr << "FAIL " << __LINE__ << ": " #expr "\n"; return 1; } } while(0)
 
@@ -171,8 +172,75 @@ int TailTests() {
     std::filesystem::remove_all(dir);
     return 0;
 }
+
+int DiagnosticTests() {
+    namespace fs=std::filesystem;
+    const auto dir=fs::temp_directory_path() /
+        (L"sdm-diag-test-"+std::to_wstring(GetCurrentProcessId()));
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    // Existing legacy logs are left untouched; new events use dated files.
+    const auto legacy=dir/L"native-events.jsonl";
+    {std::ofstream file(legacy);file<<"legacy history\n";}
+
+    sdm::AppendDiagnostic(dir,"steam_signal","started",
+        "\"runId\":\"test-run\",\"sessionId\":\"test-run-1\",\"session\":1");
+    sdm::AppendDiagnostic(dir,"steam_signal","game-selected",
+        "\"runId\":\"test-run\",\"sessionId\":\"test-run-1\",\"appId\":1716740");
+    sdm::AppendDiagnostic(dir,"display_restore","pending-retry",
+        "\"runId\":\"test-run\",\"sessionId\":\"test-run-1\"");
+    auto files=std::vector<fs::path>{};
+    for(const auto& x:fs::directory_iterator(dir))
+        if(x.path().filename().wstring().find(L"native-events-")==0)
+            files.push_back(x.path());
+    CHECK(files.size()==1);
+    std::ifstream log(files[0],std::ios::binary);
+    std::string line;
+    int count=0;
+    bool sawWarning=false;
+    while(std::getline(log,line)){
+        ++count;
+        CHECK(line.find("\"atUtc\":\"")!=std::string::npos);
+        CHECK(line.find("\"sessionId\":\"test-run-1\"")!=std::string::npos);
+        if(line.find("pending-retry")!=std::string::npos) {
+            CHECK(line.find("\"severity\":\"error\"")!=std::string::npos);
+            sawWarning=true;
+        }
+    }
+    CHECK(count==3 && sawWarning);
+    CHECK(fs::exists(legacy));
+
+    // Retention removes expired dated segments and leaves legacy history
+    // untouched. Use file time rather than relying on wall-clock timestamps.
+    const auto expired=dir/L"native-events-2000-01-01.jsonl";
+    {std::ofstream file(expired);file<<"old\n";}
+    fs::last_write_time(expired,fs::file_time_type::clock::now()-std::chrono::hours(24*20));
+    sdm::PruneDiagnostics(dir);
+    CHECK(!fs::exists(expired));
+    CHECK(fs::exists(files[0]));
+    CHECK(fs::exists(legacy));
+
+    // Simulate a full 2 MiB segment: the next event must move to another
+    // dated file rather than grow the old file indefinitely.
+    {
+        std::ofstream out(files[0],std::ios::binary|std::ios::app);
+        out<<std::string(2*1024*1024,'x');
+    }
+    auto previousSize=fs::file_size(files[0]);
+    sdm::AppendDiagnostic(dir,"lifecycle","test-rotation",
+        "\"runId\":\"test-run\"");
+    CHECK(fs::file_size(files[0])==previousSize);
+    int segments=0;
+    for(const auto& x:fs::directory_iterator(dir))
+        if(x.path().filename().wstring().find(L"native-events-")==0)
+            ++segments;
+    CHECK(segments==2);
+    fs::remove_all(dir);
+    return 0;
+}
+
 int main() {
-    if(PolicyTests()!=0 || RestoreFallbackTests()!=0 || TailTests()!=0)return 1;
-    std::cout<<"Native reliability policy and Steam tail tests passed\n";
+    if(PolicyTests()!=0 || RestoreFallbackTests()!=0 || TailTests()!=0 || DiagnosticTests()!=0)return 1;
+    std::cout<<"Native reliability, Steam tail and diagnostic rotation tests passed\n";
     return 0;
 }
