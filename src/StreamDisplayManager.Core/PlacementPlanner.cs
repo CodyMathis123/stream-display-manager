@@ -174,46 +174,85 @@ public sealed class PlacementPlanStabilizer(TimeSpan minimumDuration)
 }
 
 
-// DOOM experimental automation gate. DOOM (3017860) only; one attempt per
-// streaming session, and never fight a window already seen on virtual display.
+// One initial move, then one follow-up ONLY after the app's first move
+// has been independently confirmed on SudoVDA. No third attempt.
 public sealed class ExperimentalAutoMovePolicy
 {
     public const long EnabledAppId = 3017860;
+    public const int MaxAttemptsPerSession = 2;
     private long _session = -1;
-    private bool _attempted;
-    private readonly HashSet<string> _previouslyOnTarget = new(StringComparer.OrdinalIgnoreCase);
+    private int _attempts;
+    private string? _ownedWindow;
+    private bool _firstMoveVerified;
+    private readonly HashSet<string> _initiallyOnTarget =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public AutoMoveDecision Observe(PlacementPlan plan, long sessionNumber)
     {
-        if (sessionNumber <= 0 || plan.AppId != EnabledAppId ||
-            string.IsNullOrWhiteSpace(plan.WindowHandle))
-            return new(false, "Not the enabled game or missing identity.");
+        if (sessionNumber <= 0 || plan.AppId != EnabledAppId)
+            return new(false, "Not an enabled DOOM streaming session.");
 
         if (_session != sessionNumber)
         {
             _session = sessionNumber;
-            _attempted = false;
-            _previouslyOnTarget.Clear();
+            _attempts = 0;
+            _ownedWindow = null;
+            _firstMoveVerified = false;
+            _initiallyOnTarget.Clear();
         }
 
+        if (string.IsNullOrWhiteSpace(plan.WindowHandle))
+            return new(false, "Window identity unavailable.");
+
+        string handle = plan.WindowHandle;
         if (plan.Status == PlacementStatus.AlreadyOnTarget)
         {
-            _previouslyOnTarget.Add(plan.WindowHandle);
-            return new(false, "Previously on streaming target; respect subsequent user moves.");
+            if (_attempts == 0)
+                _initiallyOnTarget.Add(handle);
+            return new(false, _attempts == 0
+                ? "Originally on SudoVDA; respect later relocation."
+                : "DOOM is on SudoVDA after our move.");
         }
 
         if (plan.Status != PlacementStatus.WouldMove)
-            return new(false, "Planner did not find a misplaced window.");
+            return new(false, "No valid misplaced game window.");
 
-        if (_previouslyOnTarget.Contains(plan.WindowHandle))
-            return new(false, "User may have moved the window; do not fight that.", true);
+        if (_attempts == 0)
+        {
+            if (_initiallyOnTarget.Contains(handle))
+                return new(false, "Initially correctly placed; respect user relocation.", true);
 
-        if (_attempted)
-            return new(false, "One attempted move per session; no retries.", true);
+            _attempts = 1;
+            _ownedWindow = handle;
+            return new(true, "Initial DOOM wrong-monitor placement.", false, 1);
+        }
 
-        _attempted = true; // Mark before native API call.
-        return new(true, "DOOM first observed on the physical monitor.");
+        if (_attempts >= MaxAttemptsPerSession)
+            return new(false, "Both permitted attempts used; stop.", true);
+
+        if (!string.Equals(_ownedWindow, handle, StringComparison.OrdinalIgnoreCase))
+            return new(false, "HWND changed; no follow-up on a different window.", true);
+
+        if (!_firstMoveVerified)
+            return new(false, "First move was not verified on SudoVDA; no retry.", true);
+
+        _attempts = 2;
+        return new(true,
+            "The DOOM window returned to physical after a verified automatic move.",
+            false, 2);
+    }
+
+    public bool ConfirmOwnedMove(string windowHandle, long sessionNumber, int attemptNumber)
+    {
+        if (sessionNumber != _session || attemptNumber < 1 ||
+            attemptNumber != _attempts ||
+            !string.Equals(_ownedWindow, windowHandle, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (attemptNumber == 1)
+            _firstMoveVerified = true;
+        return true;
     }
 }
 
-public sealed record AutoMoveDecision(bool ShouldAttempt, string Reason, bool Suppressed = false);
+public sealed record AutoMoveDecision(
+    bool ShouldAttempt, string Reason, bool Suppressed = false, int AttemptNumber = 0);
