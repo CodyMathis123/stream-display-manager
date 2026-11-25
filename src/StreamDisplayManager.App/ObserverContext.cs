@@ -13,9 +13,8 @@ internal sealed class ObserverContext : ApplicationContext
     private readonly MessageWindow _messageWindow;
     private readonly JsonLog _log;
     private string? _previousSerializedSnapshot;
-    private string? _pendingTopologySignature;
-    private DateTimeOffset _pendingTopologySince;
-    private string? _lastStableTopologySignature;
+    private readonly TopologyStabilizer _topologyStabilizer =
+        new(TimeSpan.FromMilliseconds(750));
     private bool _closed;
 
     public ObserverContext()
@@ -81,11 +80,13 @@ internal sealed class ObserverContext : ApplicationContext
             string serialized = JsonSerializer.Serialize(snapshot);
             bool changed = !string.Equals(_previousSerializedSnapshot, serialized, StringComparison.Ordinal);
 
-            if (!changed && reason == "poll")
-                return;
-
-            _previousSerializedSnapshot = serialized;
-            _log.Write("system_snapshot", reason, snapshot);
+            // Continue observing topology even if every screen/window field is unchanged.
+            // Otherwise the 3-second polling interval can never confirm a stable topology.
+            if (changed || reason != "poll")
+            {
+                _previousSerializedSnapshot = serialized;
+                _log.Write("system_snapshot", reason, snapshot);
+            }
 
             // Installed virtual outputs may be enumerated even when none are attached.
             // Do not imply an active streaming display just because the driver exists.
@@ -97,21 +98,16 @@ internal sealed class ObserverContext : ApplicationContext
                         adapter.IsAttachedToDesktop)));
 
             // A device notification can precede Windows updating its desktop screen list.
-            // Changes need to be consistent and stable before we trust the topology.
-            var now = DateTimeOffset.UtcNow;
-            if (_pendingTopologySignature != topology.Signature)
-            {
-                _pendingTopologySignature = topology.Signature;
-                _pendingTopologySince = now;
-            }
+            // Do not label a topology stable until the SAME consistent state persists.
+            StableTopologyTransition? transition =
+                _topologyStabilizer.Observe(topology, DateTimeOffset.UtcNow);
 
-            if (topology.IsConsistent &&
-                now - _pendingTopologySince >= TimeSpan.FromMilliseconds(750) &&
-                _lastStableTopologySignature != topology.Signature)
+            if (transition is not null)
             {
-                _lastStableTopologySignature = topology.Signature;
                 _log.Write("topology_stable", "reconciled", new
                 {
+                    transition.Sequence,
+                    transition.PreviousSignature,
                     topology.IsConsistent,
                     topology.ActivePhysicalDisplays,
                     topology.ActiveVirtualDisplays,
@@ -121,7 +117,7 @@ internal sealed class ObserverContext : ApplicationContext
                 });
             }
 
-            _tray.Text = !topology.IsConsistent
+            _tray.Text = !_topologyStabilizer.IsStable(topology)
                 ? "Stream Display Manager: topology changing"
                 : topology.ActiveVirtualDisplays > 0
                     ? "Stream Display Manager: active virtual display"
