@@ -58,3 +58,26 @@ forcing, or game-specific overrides.
 4K sessions with physical-display primary while handheld SudoVDA-primary
 sessions previously worked. **Status:** candidate ready for real 4K host
 validation; the precise Windows-invalid parameter has not yet been confirmed.
+
+## D-009 — Tray-only strategy selector and non-destructive A/B modes (2026-11-25)
+
+**Decision:** Retain a lightweight native tray submenu instead of a settings
+window. Offer Disabled, Observe only, Virtual + move (opt-in experimental),
+Virtual primary with both displays active, and the already-supported
+Virtual only. Choose exactly one mode and persist it; preserve the old
+Boolean preference for existing installs. Defer live selection changes to
+the next stream, except Disabled, which attempts immediate restoration.
+
+**Reason:** DOOM: The Dark Ages dropped from ~60 host FPS during startup to
+2–4 host FPS at the main menu while virtual-only isolation was active, even
+though Windows' 4K mode stayed valid. A monitor hot-removal sensitivity is
+plausible, but unconfirmed. Virtual-primary preserves both displays; window
+move tests a no-topology-change alternative. Neither approach assumes it
+fixes game performance.
+
+**Tradeoffs:** Virtual-primary currently requires precisely one physical
+and one virtual CCD path, with validation and saved-layout rollback. Window
+relocation filters only the foreground \`steamapps\\common\` executable,
+does not inject or manipulate renderer internals, and is best-effort for
+fullscreen games. Both new strategies require hardware testing. The
+Production default remains unchanged until reviewed.
