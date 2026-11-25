@@ -429,8 +429,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int){
     wc.lpszClassName=L"StreamDisplayManager.Native";
     wc.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101));
     if(!RegisterClassW(&wc)){CloseHandle(singleton);return 2;}
+    // Hidden top-level window (never shown): unlike HWND_MESSAGE, Windows
+    // Installer's close-app helper can find it and send WM_CLOSE. WM_DESTROY
+    // already restores display topology and removes the tray icon.
     hwnd=CreateWindowExW(0,wc.lpszClassName,L"Stream Display Manager",
-        0,0,0,0,0,HWND_MESSAGE,nullptr,instance,nullptr);
+        WS_OVERLAPPED,0,0,0,0,nullptr,nullptr,instance,nullptr);
     if(!hwnd){CloseHandle(singleton);return 3;}
     icon.cbSize=sizeof(icon);
     icon.hWnd=hwnd;
