@@ -33,6 +33,8 @@ Stream Display Manager is a **small native Windows desktop utility**, not a stre
 - `.github/workflows/native-ci.yml`: authoritative Windows C++ build, tests, MSI lifecycle verification.
 - `.github/workflows/release.yml`: manual promotion of successful **Production** MSI; never publish a PR artifact.
 
+For common Windows CI/installer and display-safety verification, use the optional local [native-validation skill](.agents/skills/native-validation/SKILL.md). It is a checklist for developers and agents, not a runtime dependency.
+
 ## Validation expectations
 
 - Changes to session or display policy require a deterministic regression test, plus hardware testing when real CCD behavior is affected. CI cannot emulate a genuine Steam/SudoVDA session.
