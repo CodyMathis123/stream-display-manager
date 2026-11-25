@@ -22,7 +22,7 @@
 
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="INSTALLFOLDER" Name="StreamDisplayManager">
-        <Component Id="MainExecutable" Guid="*">
+        <Component Id="MainExecutable" Guid="8EBF0BD8-732F-46C5-B9F5-7B24ED40B2D5">
           <File Id="MainExe" Source="$(var.PublishDir)\StreamDisplayManager.App.exe">
             <Shortcut Id="StartMenuShortcut"
                       Directory="ProgramMenuFolder"
