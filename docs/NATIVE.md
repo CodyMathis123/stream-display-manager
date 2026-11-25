@@ -74,3 +74,31 @@ Manual commands:
 - StreamDisplayManager.Native.exe --self-test
 
 A reboot normally restores the last Windows-saved topology because the temporary switch does not persist it, but unexpected driver failures can require local recovery.
+
+## Local diagnostics (no Windows Event Log integration)
+
+Native diagnostics remain in per-user `%LOCALAPPDATA%\StreamDisplayManager\logs`.
+New events use daily `native-events-YYYY-MM-DD.jsonl` filenames, with
+`-001`, `-002`, etc. segments if a file reaches about 2 MiB.
+Retention is bounded to roughly **14 days / 16 MiB**, applied lazily at
+startup/first write of the day and periodically while logging. The original
+pre-upgrade `native-events.jsonl` is deliberately left alone as legacy
+history and is **not** deleted by retention or included in automated exports.
+
+Each new JSONL record has `atUtc`, `type`, `reason`, `severity`
+(`info`/`warning`/`error`) and optional details. Tray-generated events
+include a per-process `runId` and events associated with a Steam stream
+include `sessionId` as `runId-sessionNumber`. Unlike the old ordinal alone,
+that ID remains distinct across tray restarts. A `game-selected` event carries
+only the numeric Steam App ID, never the raw Steam streaming log line.
+
+Right-click the tray and choose **Export diagnostics...** to save one readable
+`.txt` file with the current version, summarized stream sessions and their
+Steam App IDs, and the recent underlying JSONL events (last seven days, most
+recent 8 MiB). A confirmation warns about game/display/device metadata before
+a native Save dialog opens. The export does not include raw Steam host logs or
+the user's Windows account settings. Review the exported file before sharing.
+
+No Windows Event Log source, administrative registration, database, web
+viewer, background service or game-specific log folders are introduced.
+Log-writing failures are best effort and must never prevent display recovery.
