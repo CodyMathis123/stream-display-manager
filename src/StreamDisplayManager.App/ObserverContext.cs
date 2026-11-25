@@ -83,9 +83,15 @@ internal sealed class ObserverContext : ApplicationContext
             _previousSerializedSnapshot = serialized;
             _log.Write("system_snapshot", reason, snapshot);
 
-            int possibleVirtual = snapshot.Adapters.Count(x => x.IsSudoVdaCandidate);
-            _tray.Text = possibleVirtual > 0
-                ? "Stream Display Manager: virtual display candidate"
+            // Installed virtual outputs may be enumerated even when none are attached.
+            // Do not imply an active streaming display just because the driver exists.
+            int activeVirtual = snapshot.Adapters.Count(adapter =>
+                adapter.IsSudoVdaCandidate &&
+                adapter.IsAttachedToDesktop &&
+                snapshot.Screens.Any(screen => screen.DeviceName == adapter.DeviceName));
+
+            _tray.Text = activeVirtual > 0
+                ? "Stream Display Manager: active virtual display"
                 : "Stream Display Manager: desktop observer";
         }
         catch (Exception ex)
