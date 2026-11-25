@@ -19,10 +19,12 @@ internal static class ExperimentalDoomMover
     private const uint PositionFlags = SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder;
     private const int GwlStyle = -16;
 
-    public static ExperimentalMoveResult Attempt(PlacementPlan plan, DesktopSnapshot snapshot, JsonLog log)
+    public static ExperimentalMoveResult Attempt(
+        PlacementPlan plan, DesktopSnapshot snapshot, JsonLog log, int attemptNumber)
     {
         var outcome = new ExperimentalMoveResult
         {
+            AttemptNumber = attemptNumber,
             WindowHandle = plan.WindowHandle ?? "",
             SourceDisplay = plan.SourceDisplay ?? "",
             TargetDisplay = plan.TargetDisplay ?? "",
@@ -128,7 +130,8 @@ internal static class ExperimentalDoomMover
             windowStyle = $"0x{style:X}",
             flags = $"0x{PositionFlags:X}",
             method = "SetWindowPos",
-            attemptLimit = "one-per-stream-session"
+            attemptNumber,
+            maxAttemptsPerSession = ExperimentalAutoMovePolicy.MaxAttemptsPerSession
         });
 
         Stopwatch stopwatch = Stopwatch.StartNew();
@@ -194,6 +197,7 @@ internal static class ExperimentalDoomMover
 
 internal sealed record ExperimentalMoveResult
 {
+    public int AttemptNumber { get; init; }
     public string WindowHandle { get; init; } = "";
     public uint ProcessId { get; init; }
     public string SourceDisplay { get; init; } = "";
