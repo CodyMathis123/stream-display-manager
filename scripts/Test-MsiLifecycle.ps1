@@ -6,6 +6,11 @@ $ErrorActionPreference = "Stop"
 $msi = (Resolve-Path $MsiPath).Path
 $exe = (Resolve-Path $ExePath).Path
 $installedExe = Join-Path $env:LOCALAPPDATA 'StreamDisplayManager\StreamDisplayManager.Native.exe'
+$eventLog = Join-Path $env:LOCALAPPDATA 'StreamDisplayManager\logs\native-events.jsonl'
+function GracefulShutdownCount {
+    if (-not (Test-Path $eventLog)) { return 0 }
+    return @(Get-Content $eventLog -Tail 100 | Where-Object { $_ -like '*"reason":"native-stopped"*' }).Count
+}
 $installLog = Join-Path $env:RUNNER_TEMP 'sdm-install.log'
 $uninstallLog = Join-Path $env:RUNNER_TEMP 'sdm-uninstall.log'
 $first = $null
@@ -37,6 +42,7 @@ function Invoke-Msi([string] $Arguments, [string] $Log) {
 }
 try {
     # A tray started outside the destination folder must gracefully exit.
+    $firstShutdowns = GracefulShutdownCount
     $first = Start-Process -FilePath $exe -PassThru
     Start-Sleep -Seconds 3
     $first.Refresh()
@@ -46,10 +52,14 @@ try {
     $installed = $true
     $first.Refresh()
     if (-not $first.HasExited) { throw 'Install did not close existing tray' }
+    if ((GracefulShutdownCount) -le $firstShutdowns) {
+        throw 'Installer stopped tray without graceful lifecycle completion'
+    }
     if (-not (Test-Path $installedExe)) { throw "Installed EXE missing: $installedExe" }
     Write-Host 'Install: existing tray closed, new executable present'
 
     # Same close behavior should apply when removing an installed tray.
+    $secondShutdowns = GracefulShutdownCount
     $second = Start-Process -FilePath $installedExe -PassThru
     Start-Sleep -Seconds 3
     $second.Refresh()
@@ -58,6 +68,9 @@ try {
     $installed = $false
     $second.Refresh()
     if (-not $second.HasExited) { throw 'Uninstall did not close installed tray' }
+    if ((GracefulShutdownCount) -le $secondShutdowns) {
+        throw 'Uninstaller stopped tray without graceful lifecycle completion'
+    }
     if (Test-Path $installedExe) { throw 'Uninstall left EXE behind' }
     Write-Host 'Uninstall: tray closed, executable removed'
 } finally {
