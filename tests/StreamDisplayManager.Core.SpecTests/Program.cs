@@ -511,10 +511,21 @@ VerifyAutoMove("Formerly on-target DOOM can have one verified follow-up",
 VerifyAutoMove("No third attempt after formerly on-target DOOM is moved",
     userRelocationPolicy.Observe(doomWrongPlan, 302).Suppressed);
 var hwndChangePolicy = new AutomaticPlacementPolicy();
-VerifyAutoMove("Do not retry a different HWND after owned first move",
-    hwndChangePolicy.Observe(doomWrongPlan, 303).ShouldAttempt &&
-    hwndChangePolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, doomWrongPlan.WindowProcessId!.Value, doomWrongPlan.AppId!.Value, 303, 1) &&
-    hwndChangePolicy.Observe(doomWrongPlan with { WindowHandle = "NEW_HANDLE" }, 303).Suppressed);
+// A verified first move permits one follow-up for a recreated HWND from the
+// same game process, but never an unlimited sequence of corrections.
+AutoMoveDecision hwndChangedFollowup = hwndChangePolicy.Observe(doomWrongPlan, 303);
+bool hwndFirstMoveVerified = hwndChangePolicy.ConfirmOwnedMove(
+    doomWrongPlan.WindowHandle!, doomWrongPlan.WindowProcessId!.Value,
+    doomWrongPlan.AppId!.Value, 303, 1);
+AutoMoveDecision hwndReplacementDecision = hwndChangePolicy.Observe(
+    doomWrongPlan with { WindowHandle = "NEW_HANDLE" }, 303);
+VerifyAutoMove("Verified first move permits one same-PID recreated HWND follow-up",
+    hwndChangedFollowup.ShouldAttempt && hwndFirstMoveVerified &&
+    hwndReplacementDecision.ShouldAttempt &&
+    hwndReplacementDecision.AttemptNumber == 2 &&
+    hwndReplacementDecision.PreviousWindowHandle == doomWrongPlan.WindowHandle);
+VerifyAutoMove("Different HWND cannot trigger third attempt",
+    hwndChangePolicy.Observe(doomWrongPlan with { WindowHandle = "ANOTHER_HANDLE" }, 303).Suppressed);
 var genericPolicy = new AutomaticPlacementPolicy();
 VerifyAutoMove("Unrecognized game with install-path proof gets automatic move",
     genericPolicy.Observe(unknownGamePlan, 700).AttemptNumber == 1);
