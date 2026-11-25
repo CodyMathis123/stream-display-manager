@@ -5,7 +5,7 @@ using StreamDisplayManager.Core;
 
 namespace StreamDisplayManager.App;
 
-/// <summary>Steam observer with one-shot DOOM auto-placement experiment; other games stay read-only.</summary>
+/// <summary>Steam/SudoVDA observer with identified-game automatic placement experiments.</summary>
 internal sealed class ObserverContext : ApplicationContext
 {
     private readonly NotifyIcon _tray;
@@ -23,8 +23,10 @@ internal sealed class ObserverContext : ApplicationContext
         new(TimeSpan.FromMilliseconds(750));
     private readonly PlacementPlanStabilizer _placementStabilizer =
         new(TimeSpan.FromMilliseconds(750));
-    private readonly ExperimentalAutoMovePolicy _autoMovePolicy = new();
-    private ExperimentalMoveResult? _pendingMoveVerification;
+    private readonly AutomaticPlacementPolicy _autoMovePolicy = new();
+    private readonly SteamGameProcessLocator _gameProcessLocator = new();
+    private string? _lastGameIdentitySignature;
+    private GameWindowMoveResult? _pendingMoveVerification;
     private DateTimeOffset _lastMoveAttemptUtc;
     private int _verificationCount;
     private bool _captureBusy;
@@ -78,7 +80,7 @@ internal sealed class ObserverContext : ApplicationContext
         _tray = new NotifyIcon
         {
             Icon = _appIcon,
-            Text = "Stream Display Manager (DOOM auto experiment)",
+            Text = "Stream Display Manager (Steam game auto-placement)",
             ContextMenuStrip = menu,
             Visible = true
         };
@@ -91,9 +93,9 @@ internal sealed class ObserverContext : ApplicationContext
 
         _log.Write("lifecycle", "started", new
         {
-            mode = "doom-auto-experimental",
-            experimentalAutoMoveAppId = ExperimentalAutoMovePolicy.EnabledAppId,
-            maxAttemptsPerSession = ExperimentalAutoMovePolicy.MaxAttemptsPerSession,
+            mode = "steam-game-auto-experimental",
+            gameWindowIdentification = "known-process-rule-or-steam-install-executable",
+            maxAttemptsPerSession = AutomaticPlacementPolicy.MaxAttemptsPerSession,
             schema = 1,
             logDirectory
         });
@@ -199,12 +201,32 @@ internal sealed class ObserverContext : ApplicationContext
 
             VerifyPendingMove(snapshot);
 
-            // Phase 2C experiment: planner stays pure. Only DOOM can invoke
-            // at most two Win32 moves, after a confirmed stream and stable wrong-target
-            // assessment. All other games remain diagnostic-only.
+            // Game-agnostic phase 2C: Steam App ID + stable SudoVDA topology +
+            // a known game process rule or verified Steam install executable.
+            // No blind foreground-window or unrelated desktop window moves.
             if (_sessionPhase == SessionPhase.Streaming && stable &&
                 _steamEvidence.IsActive && snapshot.SteamRunning)
             {
+                SteamGameIdentityScan gameIdentity = _gameProcessLocator.Inspect(
+                    _steamEvidence.AppId, snapshot);
+                string identitySignature = string.Join("|",
+                    _steamEvidence.AppId, gameIdentity.Status,
+                    string.Join(",", gameIdentity.ProcessIds.OrderBy(p => p)),
+                    gameIdentity.AccessFailures);
+                if (!string.Equals(_lastGameIdentitySignature, identitySignature,
+                        StringComparison.Ordinal))
+                {
+                    _lastGameIdentitySignature = identitySignature;
+                    _log.Write("game_identity", "steam-app-install-correlation", new
+                    {
+                        _steamEvidence.AppId,
+                        gameIdentity.Status,
+                        gameIdentity.ProcessIds,
+                        gameIdentity.AccessFailures,
+                        note = "Executable paths and game-selected monitor settings are not logged."
+                    });
+                }
+
                 var planningInput = new PlacementObservation(
                     SessionConfirmed: true,
                     TopologyStable: true,
@@ -222,7 +244,8 @@ internal sealed class ObserverContext : ApplicationContext
                         new PlacementWindow(window.WindowHandle, window.ProcessId,
                             window.ProcessName, window.DeviceName,
                             window.X, window.Y, window.Width, window.Height,
-                            window.IsMinimized)).ToArray());
+                            window.IsMinimized)).ToArray(),
+                    SteamInstalledGameProcessIds: gameIdentity.ProcessIds);
 
                 PlacementPlan plan = PlacementPlanner.Evaluate(planningInput);
                 PlacementPlan? stablePlan = _placementStabilizer.Observe(
@@ -231,10 +254,11 @@ internal sealed class ObserverContext : ApplicationContext
                 {
                     AutoMoveDecision autoDecision = _autoMovePolicy.Observe(
                         stablePlan, _steamEvidence.SessionNumber);
-                    bool experimentalExecutor = stablePlan.AppId ==
-                        ExperimentalAutoMovePolicy.EnabledAppId;
+                    bool experimentalExecutor = stablePlan.AppId is not null &&
+                        stablePlan.WindowProcessId is not null &&
+                        stablePlan.IdentityEvidence != "none";
                     _log.Write("placement_plan",
-                        experimentalExecutor ? "doom-auto-experimental" : "dry-run", new
+                        experimentalExecutor ? "steam-game-auto-experimental" : "dry-run", new
                     {
                         status = stablePlan.Status.ToString(),
                         stablePlan.Reason,
@@ -242,9 +266,12 @@ internal sealed class ObserverContext : ApplicationContext
                         stablePlan.WindowHandle,
                         stablePlan.SourceDisplay,
                         stablePlan.TargetDisplay,
+                        stablePlan.WindowProcessId,
+                        stablePlan.WindowProcessName,
+                        stablePlan.IdentityEvidence,
                         plannerIsDryRun = stablePlan.IsDryRun,
                         _steamEvidence.SessionNumber,
-                        identityConfidence = "provisional-process-rule",
+                        identityConfidence = stablePlan.IdentityEvidence,
                         executorEnabled = experimentalExecutor,
                         autoMoveReason = autoDecision.Reason,
                         autoDecision.ShouldAttempt,
@@ -253,8 +280,8 @@ internal sealed class ObserverContext : ApplicationContext
 
                     if (autoDecision.ShouldAttempt)
                     {
-                        ExperimentalMoveResult result =
-                            ExperimentalDoomMover.Attempt(
+                        GameWindowMoveResult result =
+                            GameWindowMover.Attempt(
                                 stablePlan, snapshot, _log, autoDecision.AttemptNumber);
                         if (result.Attempted)
                         {
@@ -265,7 +292,7 @@ internal sealed class ObserverContext : ApplicationContext
                     }
                     else if (autoDecision.Suppressed)
                     {
-                        _log.Write("move_suppressed", "doom-auto-policy", new
+                        _log.Write("move_suppressed", "steam-game-auto-policy", new
                         {
                             stablePlan.AppId,
                             stablePlan.WindowHandle,
@@ -280,12 +307,13 @@ internal sealed class ObserverContext : ApplicationContext
                 // A new stream must not inherit a candidate from an earlier
                 // session, even when Steam reuses the same game window.
                 _placementStabilizer.Reset();
+                _lastGameIdentitySignature = null;
             }
 
             _tray.Text = !stable
                 ? "Stream Display Manager: topology changing"
                 : _sessionPhase == SessionPhase.Streaming
-                    ? "Stream Display Manager: stream confirmed (DOOM auto)"
+                    ? "Stream Display Manager: stream confirmed (game auto)"
                     : virtualActive
                         ? "Stream Display Manager: virtual display candidate"
                         : "Stream Display Manager: desktop observer";
@@ -327,10 +355,11 @@ internal sealed class ObserverContext : ApplicationContext
             string.Equals(window.DeviceName, attempt.SourceDisplay,
                 StringComparison.OrdinalIgnoreCase);
 
-        _log.Write("move_verification", "doom-post-win32", new
+        _log.Write("move_verification", "steam-game-post-win32", new
         {
             attempt.WindowHandle,
             attempt.ProcessId,
+            attempt.AppId,
             attempt.ApiSucceeded,
             attempt.AttemptNumber,
             attempt.TargetDisplay,
@@ -350,8 +379,9 @@ internal sealed class ObserverContext : ApplicationContext
             attempt.ApiSucceeded)
         {
             bool confirmed = _autoMovePolicy.ConfirmOwnedMove(
-                attempt.WindowHandle, _steamEvidence.SessionNumber, attempt.AttemptNumber);
-            _log.Write("move_owned_confirmation", "doom-verified-on-target", new
+                attempt.WindowHandle, attempt.ProcessId, attempt.AppId ?? 0L,
+                _steamEvidence.SessionNumber, attempt.AttemptNumber);
+            _log.Write("move_owned_confirmation", "steam-game-verified-on-target", new
             {
                 attempt.AttemptNumber,
                 attempt.WindowHandle,
@@ -417,7 +447,7 @@ internal sealed class ObserverContext : ApplicationContext
         if (_closed)
             return;
 
-        _log.Write("lifecycle", "stopped", new { mode = "doom-auto-experimental" });
+        _log.Write("lifecycle", "stopped", new { mode = "steam-game-auto-experimental" });
         _closed = true;
 
         _scanTimer.Stop();
