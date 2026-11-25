@@ -426,6 +426,42 @@ VerifyAutoMove("Unknown/unsafe placement never authorizes native move",
     !movePolicy.Observe(PlacementPlanner.Evaluate(PlacementInput(
         new[] { doomPhysicalWindow with { DeviceName = virtualScreen.DeviceName } },
         appId: 3017860, screens: new[] { doomPhysicalScreen, virtualScreen })), 5).ShouldAttempt);
+
+// Regression from DOOM's intro-to-main-menu monitor reset, November 25.
+// DOOM moved by SetWindowPos, stayed on SudoVDA through two observations,
+// then returned to physical 30-36 seconds later in each Steam session.
+var followUpPolicy = new ExperimentalAutoMovePolicy();
+AutoMoveDecision initialFollowUp = followUpPolicy.Observe(doomWrongPlan, 300);
+VerifyAutoMove("Initial DOOM placement attempt numbered 1",
+    initialFollowUp.ShouldAttempt && initialFollowUp.AttemptNumber == 1);
+VerifyAutoMove("Without confirmed ownership a follow-up is suppressed",
+    followUpPolicy.Observe(doomWrongPlan, 300).Suppressed);
+VerifyAutoMove("Wrong HWND/session cannot confirm an app-owned move",
+    !followUpPolicy.ConfirmOwnedMove("OTHER", 300, 1) &&
+    !followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 301, 1));
+VerifyAutoMove("First move may be verified after two on-target observations",
+    followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 300, 1));
+AutoMoveDecision secondFollowUp = followUpPolicy.Observe(doomWrongPlan, 300);
+VerifyAutoMove("Verified DOOM reset authorizes follow-up move number 2",
+    secondFollowUp.ShouldAttempt && secondFollowUp.AttemptNumber == 2);
+VerifyAutoMove("A third DOOM move is never authorized",
+    followUpPolicy.Observe(doomWrongPlan, 300).Suppressed);
+VerifyAutoMove("Old attempt cannot confirm a newer attempt",
+    !followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 300, 1));
+VerifyAutoMove("Second move may also be confirmed",
+    followUpPolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 300, 2));
+VerifyAutoMove("Fresh stream has its own two-attempt budget",
+    followUpPolicy.Observe(doomWrongPlan, 301).AttemptNumber == 1);
+var userRelocationPolicy = new ExperimentalAutoMovePolicy();
+VerifyAutoMove("A correctly launched DOOM window remains untouched",
+    !userRelocationPolicy.Observe(doomCorrectPlan, 302).ShouldAttempt);
+VerifyAutoMove("User moves an initially correct window: don't chase",
+    userRelocationPolicy.Observe(doomWrongPlan, 302).Suppressed);
+var hwndChangePolicy = new ExperimentalAutoMovePolicy();
+VerifyAutoMove("Do not retry a different HWND after owned first move",
+    hwndChangePolicy.Observe(doomWrongPlan, 303).ShouldAttempt &&
+    hwndChangePolicy.ConfirmOwnedMove(doomWrongPlan.WindowHandle!, 303, 1) &&
+    hwndChangePolicy.Observe(doomWrongPlan with { WindowHandle = "NEW_HANDLE" }, 303).Suppressed);
 Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks} total checks passed");
 
 return failures == 0 ? 0 : 1;
