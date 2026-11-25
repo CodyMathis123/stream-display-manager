@@ -74,7 +74,7 @@ internal sealed class VirtualOnlyDisplayController
             // A persisted journal is deliberately written BEFORE any mutation.
             // If the process terminates, restart or --restore can use it.
             string temporary = _journalPath + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(before));
+            File.WriteAllText(temporary, JsonSerializer.Serialize(before, new JsonSerializerOptions { IncludeFields = true }));
             File.Move(temporary, _journalPath, overwrite: true);
             try
             {
@@ -115,7 +115,8 @@ internal sealed class VirtualOnlyDisplayController
         }
         try
         {
-            var before = JsonSerializer.Deserialize<Configuration>(File.ReadAllText(_journalPath))
+            var before = JsonSerializer.Deserialize<Configuration>(File.ReadAllText(_journalPath),
+                new JsonSerializerOptions { IncludeFields = true })
                 ?? throw new InvalidOperationException("Invalid restore journal.");
             Check(SetDisplayConfig((uint)before.Paths.Length, before.Paths,
                 (uint)before.Modes.Length, before.Modes,
