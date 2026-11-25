@@ -1,0 +1,17 @@
+# Build outputs
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+
+# Machine-specific data and diagnostic traces
+logs/
+*.jsonl
+settings.local.json
+*.dmp
+
+# OS/editor
+.DS_Store
+Thumbs.db

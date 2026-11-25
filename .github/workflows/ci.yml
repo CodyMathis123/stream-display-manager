@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [Production, "feature/**"]
+  pull_request:
+    branches: [Production]
+  workflow_dispatch:
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Restore
+        run: dotnet restore StreamDisplayManager.slnx
+      - name: Build
+        run: dotnet build StreamDisplayManager.slnx --configuration Release --no-restore
+      - name: Run core specification checks
+        run: dotnet run --project tests/StreamDisplayManager.Core.SpecTests --configuration Release --no-build
