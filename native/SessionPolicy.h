@@ -8,6 +8,15 @@ namespace sdm {
 // A missing SudoVDA or lost Steam evidence restores immediately; a confirmed
 // normal stream end gets a short reconnect window while SudoVDA still exists.
 enum class Action { None, Switch, Restore, Repair };
+
+// The database fallback is attempted only when the saved topology could not
+// be applied AND verified. Never call it after successful physical recovery.
+template<class ApplySaved, class ApplyDatabase, class CheckPhysical>
+bool RestoreWithFallback(ApplySaved&& saved, ApplyDatabase&& database,
+                         CheckPhysical&& physical) {
+    if(saved() && physical()) return true;
+    return database() && physical();
+}
 struct Evidence {
     bool enabled=false;
     bool steamRunning=false;
