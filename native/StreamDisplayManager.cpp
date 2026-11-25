@@ -27,7 +27,7 @@
 namespace {
 constexpr UINT kTrayMessage=WM_APP+20;
 constexpr UINT_PTR kPollTimer=1;
-constexpr UINT kToggle=1001,kRestore=1002,kModes=1003,kLogs=1004,kExit=1005;
+constexpr UINT kToggle=1001,kRestore=1002,kModes=1003,kLogs=1004,kExit=1005,kStartup=1006;
 HWND hwnd=nullptr;
 NOTIFYICONDATAW icon{};
 std::filesystem::path root,logdir,journal,settings,steamlog;
@@ -40,6 +40,8 @@ std::string partial;
 std::wstring oldTopology;
 std::wstring lastModesSignature;
 bool missingLogReported=false;
+constexpr wchar_t kRunKey[]=L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kNativeRunName[]=L"StreamDisplayManagerNative";
 long long lastAttemptSession=-1;
 
 std::string Utf8(const std::wstring& value) {
@@ -101,6 +103,53 @@ void SaveSettings() {
         Log("settings","rename-failed", "\"win32Error\":"+std::to_string(GetLastError()));
     else Log("settings","saved",std::string("\"enabled\":")+(enabled?"true":"false"));
 }
+
+bool ReadRunValue(const wchar_t* name,std::wstring& value) {
+    HKEY key{};
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,kRunKey,0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)
+        return false;
+    wchar_t data[4096]{};
+    DWORD bytes=sizeof(data),type=0;
+    LONG result=RegQueryValueExW(key,name,nullptr,&type,reinterpret_cast<BYTE*>(data),&bytes);
+    RegCloseKey(key);
+    if(result!=ERROR_SUCCESS || (type!=REG_SZ && type!=REG_EXPAND_SZ))
+        return false;
+    data[(sizeof(data)/sizeof(data[0]))-1]=L'\0';
+    value=data;
+    return true;
+}
+bool StartupEnabled() {
+    std::wstring value;
+    return ReadRunValue(kNativeRunName,value);
+}
+bool SetStartup(bool turnOn) {
+    HKEY key{};
+    DWORD disposition=0;
+    LONG result=RegCreateKeyExW(HKEY_CURRENT_USER,kRunKey,0,nullptr,0,
+        KEY_SET_VALUE,nullptr,&key,&disposition);
+    if(result!=ERROR_SUCCESS){Log("startup","registry-open-failed","\"error\":"+std::to_string(result));return false;}
+    if(turnOn) {
+        wchar_t executable[32768]{};
+        DWORD size=GetModuleFileNameW(nullptr,executable,32768);
+        if(size==0 || size>=32768){RegCloseKey(key);return false;}
+        std::wstring command=L"\""+std::wstring(executable)+L"\"";
+        result=RegSetValueExW(key,kNativeRunName,0,REG_SZ,
+            reinterpret_cast<const BYTE*>(command.c_str()),
+            static_cast<DWORD>((command.size()+1)*sizeof(wchar_t)));
+    } else {
+        result=RegDeleteValueW(key,kNativeRunName);
+        if(result==ERROR_FILE_NOT_FOUND)result=ERROR_SUCCESS;
+    }
+    RegCloseKey(key);
+    if(result!=ERROR_SUCCESS){Log("startup","registry-write-failed","\"error\":"+std::to_string(result));return false;}
+    Log("startup",turnOn?"enabled":"disabled");
+    return true;
+}
+bool HasManagedStartup() {
+    std::wstring value;
+    return ReadRunValue(L"StreamDisplayManager",value);
+}
+
 std::filesystem::path SteamLogPath() {
     HKEY key{};
     if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Valve\\Steam",0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)
@@ -280,6 +329,7 @@ void Menu() {
     AppendMenuW(menu,MF_STRING,kRestore,L"Restore physical display now");
     AppendMenuW(menu,MF_STRING,kModes,L"Capture display modes");
     AppendMenuW(menu,MF_STRING,kLogs,L"Open diagnostics folder");
+    AppendMenuW(menu,MF_STRING|(StartupEnabled()?MF_CHECKED:0),kStartup,L"Start with Windows");
     AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
     AppendMenuW(menu,MF_STRING,kExit,L"Exit");
     POINT p{};GetCursorPos(&p);SetForegroundWindow(hwnd);
@@ -312,6 +362,16 @@ LRESULT CALLBACK WindowProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
             Tick();break;
         case kModes: CaptureModes(sdm::Screens(true),"manual");break;
         case kLogs:OpenLogFolder();break;
+        case kStartup:
+            if(StartupEnabled())SetStartup(false);
+            else if(HasManagedStartup()){
+                MessageBoxW(w,L"The managed .NET version is still registered to start with Windows.\\n\\nDisable its Startup entry or uninstall it before enabling native startup, so the two variants do not compete for the same session.",
+                    L"Stream Display Manager",MB_OK|MB_ICONINFORMATION);
+            } else if(!SetStartup(true)){
+                MessageBoxW(w,L"Could not configure native startup. See native-events.jsonl for details.",
+                    L"Stream Display Manager",MB_OK|MB_ICONERROR);
+            }
+            break;
         case kExit: DestroyWindow(w);break;
         }return 0;
     case WM_CLOSE:DestroyWindow(w);return 0;
