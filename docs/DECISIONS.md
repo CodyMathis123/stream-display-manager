@@ -42,3 +42,19 @@ text/session summary instead of a live viewer, and keep only a bounded recent
 history. Preserve the legacy single JSONL file without automatic deletion.
 **Status:** proposed in the diagnostics PR. **Non-goals:** Windows Event Log,
 SQLite, logging service, game-specific files and automatic uploads.
+
+## D-008 — Temporary CCD isolation from a secondary 4K source (2026-11-25)
+
+**Decision:** Use a pure candidate transformation to rebase a uniquely
+identified active SudoVDA path from a secondary desktop position to (0,0).
+Rebuild only referenced source/target mode entries, validate before changing
+displays and preserve the original 2-path journal for recovery. If validating
+the explicit active modes fails, a single validated Windows-selected-mode
+fallback is allowed; the chosen plan and failure stage are logged for the
+next iteration. No retry loops, persistence, services, automatic resolution
+forcing, or game-specific overrides.
+
+**Reason:** Reproducible `SetDisplayConfig` error 87 occurred on three
+4K sessions with physical-display primary while handheld SudoVDA-primary
+sessions previously worked. **Status:** candidate ready for real 4K host
+validation; the precise Windows-invalid parameter has not yet been confirmed.
