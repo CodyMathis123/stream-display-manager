@@ -117,8 +117,11 @@ jobs:
             return $rows
           }
           $files = @(Read-MsiRows 'SELECT FileName FROM File')
-          $productVersions = @(Read-MsiRows "SELECT Value FROM Property WHERE Property = 'ProductVersion'")
-          if ($productVersions.Count -ne 1 -or $productVersions[0] -ne $env:APP_VERSION) {
+          # WindowsInstaller COM can emit empty values via PowerShell's
+          # collection pipeline. Compare only actual nonempty string values.
+          $productVersions = @(Read-MsiRows "SELECT Value FROM Property WHERE Property = 'ProductVersion'" |
+            ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          if ($productVersions.Count -ne 1 -or $productVersions[0] -cne $env:APP_VERSION) {
             throw "MSI ProductVersion does not match EXE: $($productVersions -join ',') vs $env:APP_VERSION"
           }
           $registryNames = @(Read-MsiRows 'SELECT Name FROM Registry')
