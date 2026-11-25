@@ -28,6 +28,18 @@ Older managed and native preview installers have different identities. Uninstall
 - Docked Steam Deck validation has not yet been performed.
 - Test the canonical installer startup/uninstall behavior on the host before a stable release.
 
+## Small reliability policy
+
+The existing three-second polling cycle also checks for display drift. If Windows re-enables a physical monitor during a confirmed Steam stream, the native app may re-isolate SudoVDA after the topology stabilizes, with a 15-second cooldown and a maximum of two repair attempts per confirmed session. Repair uses the current active CCD paths and leaves the original pre-stream recovery journal unchanged.
+
+An explicit Steam stream-end marker starts a 12-second reconnection window only while the virtual display remains attached. If a new confirmed stream starts, the pending restoration is canceled. If SudoVDA disappears, the Steam process exits, or log evidence becomes uncertain, restore begins immediately.
+
+Steam log tracking checks file identity and position. When the file is absent at login, replaced, truncated or rotated, observation reopens at EOF and invalidates old session evidence. Historical lines cannot trigger a display switch.
+
+Restoration tries the original CCD paths first, and falls back to Windows' last saved topology if the saved paths fail or do not reactivate a physical display. The recovery journal is retained until the physical desktop is confirmed. The streaming topology is never saved in Windows' display database.
+
+Focused native tests cover these decisions and file-tail scenarios without changing any real display configuration. The timings are deliberately internal constants, not additional user-facing settings.
+
 ## Diagnostics and recovery
 
 Right-click tray -> Capture display modes. Compare display_modes events before/after docking. Full GDI-advertised modes do not guarantee a particular game exposes those modes.
