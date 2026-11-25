@@ -72,6 +72,35 @@ jobs:
           $msis = @(Get-ChildItem installer-output -Filter '*.msi' -Recurse)
           if ($msis.Count -ne 1) { throw 'Expected exactly one MSI' }
           Write-Host "Native MSI: $($msis[0].FullName) ($($msis[0].Length) bytes)"
+      - name: Validate packaged native executable and startup registration
+        shell: pwsh
+        run: |
+          $msi = @(Get-ChildItem installer-output -Filter '*.msi' -Recurse | Select-Object -First 1)
+          if ($msi.Count -ne 1) { throw 'Missing MSI for inspection' }
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $database = $installer.OpenDatabase($msi[0].FullName, 0)
+          function Read-MsiRows([string]$sql) {
+            $view = $database.OpenView($sql)
+            $view.Execute()
+            $rows = @()
+            while ($record = $view.Fetch()) {
+              $rows += $record.StringData(1)
+            }
+            $view.Close()
+            return $rows
+          }
+          $files = @(Read-MsiRows 'SELECT FileName FROM File')
+          $registryNames = @(Read-MsiRows 'SELECT Name FROM Registry')
+          if ($files -notmatch 'StreamDisplayManager.Native.exe') {
+            throw 'MSI does not contain native EXE'
+          }
+          if ($registryNames -notcontains 'StreamDisplayManagerNative') {
+            throw 'Native login startup registry value absent'
+          }
+          if ($registryNames -contains 'StreamDisplayManager') {
+            throw 'Legacy managed startup registry value must not ship'
+          }
+          Write-Host 'Validated native EXE and per-user startup registry entry'
       - name: Upload native MSI
         uses: actions/upload-artifact@v7
         with:
