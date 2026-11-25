@@ -159,4 +159,71 @@ VerifyStability("Final disconnect publishes physical desktop",
     recoveredAgain is null && finalDesktop?.Sequence == 5);
 
 Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks - failures}/{checks.Length + topologyChecks.Length + stabilityChecks} total checks passed");
+// Sanitized Steam host-log lines shaped like the user's two real files.
+// These tests guard against interpreting game/capture events as stream events.
+int steamChecks = 0;
+void VerifySteam(string name, bool passed)
+{
+    steamChecks++;
+    Console.WriteLine($"{(passed ? "PASS" : "FAIL")} {name}");
+    if (!passed)
+        failures++;
+}
+
+const string prefix = "[2026-11-25 09:10:39][208376.813953] ";
+var startSignal = SteamSignalParser.Parse(
+    prefix + "Streaming started to steamdeck at 192.0.2.10:55568, audio channels = 2, MTU = 1468");
+VerifySteam("Explicit host streaming start is recognized",
+    startSignal?.Kind == SteamSignalKind.Started &&
+    startSignal.ClientKind == "steamdeck" && startSignal.AppId is null);
+
+var gameSignal = SteamSignalParser.Parse(
+    prefix + "Game: Starfield (1716740)");
+VerifySteam("Steam app id is extracted without storing game name",
+    gameSignal?.Kind == SteamSignalKind.GameSelected &&
+    gameSignal.AppId == 1716740 &&
+    gameSignal.ClientKind is null);
+
+var endSignal = SteamSignalParser.Parse(
+    prefix + "Encoding complete");
+VerifySteam("Encoding completion is recognized",
+    endSignal?.Kind == SteamSignalKind.Completed);
+
+VerifySteam("Listener initialization is not a connected session",
+    SteamSignalParser.Parse(prefix + "Streaming initialized and listening on port 27031") is null);
+VerifySteam("Desktop video switch is not a disconnected session",
+    SteamSignalParser.Parse(prefix + ">>> Stopped desktop stream") is null);
+VerifySteam("Game recording stop is not a stream end",
+    SteamSignalParser.Parse(prefix + "Game Recording - game stopped [gameid=1716740]") is null);
+VerifySteam("Lost video capture is not a stream end",
+    SteamSignalParser.Parse(prefix + "Lost Video Stream") is null);
+VerifySteam("Arbitrary log text containing start words is rejected",
+    SteamSignalParser.Parse(prefix + "CLIENT: Streaming started to steamdeck at fake") is null);
+
+var steamState = new SteamEvidenceState();
+VerifySteam("Observer starts unknown even if old log contains sessions",
+    !steamState.IsActive && !steamState.EndObserved && steamState.SessionNumber == 0);
+if (startSignal is not null)
+    steamState.Observe(startSignal);
+if (gameSignal is not null)
+    steamState.Observe(gameSignal);
+VerifySteam("Start then game attribution creates an active session",
+    steamState.IsActive && !steamState.EndObserved &&
+    steamState.AppId == 1716740 && steamState.SessionNumber == 1);
+if (endSignal is not null)
+    steamState.Observe(endSignal);
+VerifySteam("Disconnect ends the session without implying game exit",
+    !steamState.IsActive && steamState.EndObserved && steamState.AppId is null);
+if (startSignal is not null)
+    steamState.Observe(startSignal);
+VerifySteam("Reconnect creates another distinct active session",
+    steamState.IsActive && !steamState.EndObserved && steamState.SessionNumber == 2);
+steamState.ResetAfterDetachedVirtualDisplay();
+VerifySteam("Detached physical desktop invalidates stale starts",
+    !steamState.IsActive && !steamState.EndObserved && steamState.SessionNumber == 2);
+VerifySteam("Session reducer requires corroborating display evidence",
+    !SessionReducer.Evaluate(SessionPhase.Candidate,
+        new SessionEvidence(true, false, steamState.IsActive), false).MayPlanWindowMoves);
+
+Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks} total checks passed");
 return failures == 0 ? 0 : 1;

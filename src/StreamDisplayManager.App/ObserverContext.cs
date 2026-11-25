@@ -12,6 +12,10 @@ internal sealed class ObserverContext : ApplicationContext
     private readonly System.Windows.Forms.Timer _scanTimer;
     private readonly MessageWindow _messageWindow;
     private readonly JsonLog _log;
+    private readonly SteamEvidenceState _steamEvidence = new();
+    private readonly SteamLogTailObserver? _steamLog;
+    private SessionPhase _sessionPhase = SessionPhase.Desktop;
+    private string? _lastSteamLogGap;
     private string? _previousSerializedSnapshot;
     private readonly TopologyStabilizer _topologyStabilizer =
         new(TimeSpan.FromMilliseconds(750));
@@ -24,6 +28,21 @@ internal sealed class ObserverContext : ApplicationContext
             "StreamDisplayManager", "logs");
 
         _log = new JsonLog(logDirectory);
+
+        // Start at EOF: historical Steam sessions are never evidence of a live stream.
+        try
+        {
+            _steamLog = SteamLogTailObserver.TryCreate();
+            _log.Write("steam_log_source", _steamLog is null ? "unavailable" : "attached",
+                new { observer = "streaming_log.txt", historyRead = false });
+        }
+        catch (Exception ex)
+        {
+            _log.Write("error", "steam-log-initialization", new
+            {
+                error = ex.GetType().Name
+            });
+        }
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Capture snapshot", null, (_, _) => Capture("manual"));
@@ -76,6 +95,7 @@ internal sealed class ObserverContext : ApplicationContext
 
         try
         {
+            ReadSteamEvidence();
             DesktopSnapshot snapshot = WindowsObserver.Read();
             string serialized = JsonSerializer.Serialize(snapshot);
             bool changed = !string.Equals(_previousSerializedSnapshot, serialized, StringComparison.Ordinal);
@@ -117,11 +137,51 @@ internal sealed class ObserverContext : ApplicationContext
                 });
             }
 
-            _tray.Text = !_topologyStabilizer.IsStable(topology)
+            bool stable = _topologyStabilizer.IsStable(topology);
+            bool virtualActive = topology.IsConsistent && topology.ActiveVirtualDisplays > 0;
+
+            // Correlate explicit host-log starts with a stable SudoVDA desktop
+            // before reporting Streaming. This remains strictly observational.
+            SessionDecision decision = SessionReducer.Evaluate(
+                _sessionPhase,
+                new SessionEvidence(
+                    snapshot.SteamRunning,
+                    virtualActive,
+                    _steamEvidence.IsActive,
+                    _steamEvidence.EndObserved,
+                    stable),
+                hasOwnedMoves: false);
+
+            if (decision.NextPhase != _sessionPhase)
+            {
+                _log.Write("session_transition", "steam-display-correlation", new
+                {
+                    previous = _sessionPhase.ToString(),
+                    next = decision.NextPhase.ToString(),
+                    decision.Reason,
+                    decision.MayPlanWindowMoves,
+                    steamStartObserved = _steamEvidence.IsActive,
+                    steamEndObserved = _steamEvidence.EndObserved,
+                    _steamEvidence.SessionNumber,
+                    _steamEvidence.AppId,
+                    topologyStable = stable,
+                    virtualActive
+                });
+                _sessionPhase = decision.NextPhase;
+            }
+
+            // Stale start markers must not authorize a later virtual display
+            // appearing after we observed the physical desktop return.
+            if (_sessionPhase == SessionPhase.Desktop && stable && !virtualActive)
+                _steamEvidence.ResetAfterDetachedVirtualDisplay();
+
+            _tray.Text = !stable
                 ? "Stream Display Manager: topology changing"
-                : topology.ActiveVirtualDisplays > 0
-                    ? "Stream Display Manager: active virtual display"
-                    : "Stream Display Manager: desktop observer";
+                : _sessionPhase == SessionPhase.Streaming
+                    ? "Stream Display Manager: stream confirmed (read only)"
+                    : virtualActive
+                        ? "Stream Display Manager: virtual display candidate"
+                        : "Stream Display Manager: desktop observer";
         }
         catch (Exception ex)
         {
@@ -129,6 +189,54 @@ internal sealed class ObserverContext : ApplicationContext
             {
                 error = ex.GetType().Name,
                 ex.Message
+            });
+        }
+    }
+
+    private void ReadSteamEvidence()
+    {
+        if (_steamLog is null)
+            return;
+
+        try
+        {
+            SteamLogBatch batch = _steamLog.Poll();
+            if (batch.HasGap)
+            {
+                _steamEvidence.Invalidate();
+                if (_lastSteamLogGap != batch.GapReason)
+                {
+                    _log.Write("steam_log_gap", batch.GapReason ?? "unknown", new
+                    {
+                        message = "Session confidence reset; old log history is not replayed."
+                    });
+                }
+                _lastSteamLogGap = batch.GapReason;
+            }
+            else
+            {
+                _lastSteamLogGap = null;
+            }
+
+            foreach (SteamSignal signal in batch.Signals)
+            {
+                _steamEvidence.Observe(signal);
+                _log.Write("steam_signal", signal.Kind.ToString(), new
+                {
+                    _steamEvidence.SessionNumber,
+                    signal.AppId,
+                    signal.ClientKind,
+                    _steamEvidence.IsActive,
+                    _steamEvidence.EndObserved
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _steamEvidence.Invalidate();
+            _log.Write("error", "steam-log-read-failed", new
+            {
+                error = ex.GetType().Name
             });
         }
     }
