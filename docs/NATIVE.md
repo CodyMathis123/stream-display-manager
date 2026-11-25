@@ -19,6 +19,25 @@ Stream Display Manager is a small Windows x64 C++20 tray application. The only s
 
 Older managed and native preview installers have different identities. Uninstall them first before installing the single native MSI. No automatic compatibility migration is implemented or required.
 
+## MSI tray lifecycle
+
+Interactive MSI installation and upgrade now request a graceful shutdown of the
+running Stream Display Manager tray before replacing the native EXE. The hidden
+top-level Win32 message window handles WM_CLOSE through its normal WM_DESTROY
+path, including display restoration and tray-icon removal. For older
+message-only-window builds that cannot receive that message, the MSI terminates
+the leftover process after a 15-second timeout. The newly launched instance
+will check any existing display recovery journal before observing new streams.
+
+After a successful **interactive** install or upgrade, WiX launches the newly
+installed native executable with normal user privileges. Silent MSI operations
+do not launch a tray, but the existing HKCU Run entry still starts it at the
+next Windows sign-in. The MSI also closes the tray during uninstall; uninstall
+does not relaunch it.
+
+The Windows CI pipeline inspects close/launch MSI action scheduling and smoke
+tests a real silent install and uninstall while a native tray is running.
+
 ## Validation
 
 - The initial native preview built successfully using MSVC and WiX.
