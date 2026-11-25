@@ -268,5 +268,105 @@ VerifySteam("Session reducer requires corroborating display evidence",
     !SessionReducer.Evaluate(SessionPhase.Candidate,
         new SessionEvidence(true, false, steamState.IsActive), false).MayPlanWindowMoves);
 
-Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6} total checks passed");
+// Phase 2A/B: dry-run-only placement decisions. The observed Starfield
+// Steam App ID/process rule is diagnostic; a future executor needs stronger
+// process-instance ownership and fullscreen/foreground validation.
+int placementChecks = 0;
+void VerifyPlacement(string name, PlacementStatus actual, PlacementStatus expected)
+{
+    placementChecks++;
+    bool pass = actual == expected;
+    Console.WriteLine($"{(pass ? "PASS" : "FAIL")} {name}");
+    if (!pass) failures++;
+}
+
+var virtualScreen = new PlacementScreen(@"\\.\DISPLAY6", 0, 0, 1280, 800,
+    IsVirtualCandidate: true, IsPhysical: false);
+var physicalScreen = new PlacementScreen(@"\\.\DISPLAY1", -3440, 0, 3440, 1440,
+    IsVirtualCandidate: false, IsPhysical: true);
+var deckWindow = new PlacementWindow("ABC1", 1500, "Starfield",
+    virtualScreen.DeviceName, 0, 0, 1280, 800, false);
+var desktopWindow = deckWindow with
+{
+    DeviceName = physicalScreen.DeviceName, X = -3440, Y = 0,
+    Width = 3440, Height = 1440
+};
+
+PlacementObservation PlacementInput(
+    PlacementWindow[] windows, bool confirmed = true, bool stable = true,
+    long? appId = 1716740, PlacementScreen[]? screens = null) =>
+    new(confirmed, stable, appId,
+        screens ?? new[] { physicalScreen, virtualScreen }, windows);
+
+VerifyPlacement("No stream: no placement evaluation",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow }, confirmed: false)).Status,
+    PlacementStatus.Hold);
+VerifyPlacement("Unstable topology: no placement evaluation",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow }, stable: false)).Status,
+    PlacementStatus.Hold);
+VerifyPlacement("Steam already placed Starfield on virtual display",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { deckWindow })).Status,
+    PlacementStatus.AlreadyOnTarget);
+VerifyPlacement("Physical-monitor Starfield is a dry-run candidate",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow })).Status,
+    PlacementStatus.WouldMove);
+VerifyPlacement("Unknown Steam App ID cannot claim a game process",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow }, appId: 1234567)).Status,
+    PlacementStatus.UnrecognizedGame);
+VerifyPlacement("No game window: hold",
+    PlacementPlanner.Evaluate(PlacementInput([])).Status,
+    PlacementStatus.GameWindowNotFound);
+VerifyPlacement("Ambiguous game windows: hold",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow, deckWindow })).Status,
+    PlacementStatus.AmbiguousGameWindow);
+VerifyPlacement("Minimized game window: hold",
+    PlacementPlanner.Evaluate(PlacementInput(new[] {
+        desktopWindow with { IsMinimized = true } })).Status,
+    PlacementStatus.UnsafeWindow);
+VerifyPlacement("Small dialog is not a game main window",
+    PlacementPlanner.Evaluate(PlacementInput(new[] {
+        desktopWindow with { Width = 320, Height = 240 } })).Status,
+    PlacementStatus.UnsafeWindow);
+VerifyPlacement("Window attribution conflict: hold",
+    PlacementPlanner.Evaluate(PlacementInput(new[] {
+        desktopWindow with { DeviceName = virtualScreen.DeviceName } })).Status,
+    PlacementStatus.UnknownWindowLocation);
+VerifyPlacement("Overlapping monitors cannot give a unique window source",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { deckWindow },
+        screens: new[] { physicalScreen with { X = 0 }, virtualScreen })).Status,
+    PlacementStatus.UnknownWindowLocation);
+VerifyPlacement("Ambiguous virtual targets: hold",
+    PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow },
+        screens: new[] { physicalScreen, virtualScreen,
+            virtualScreen with { DeviceName = @"\\.\DISPLAY7" } })).Status,
+    PlacementStatus.AmbiguousTarget);
+
+var candidatePlan = PlacementPlanner.Evaluate(PlacementInput(new[] { desktopWindow }));
+var noOpPlan = PlacementPlanner.Evaluate(PlacementInput(new[] { deckWindow }));
+var placementStabilizer = new PlacementPlanStabilizer(TimeSpan.FromMilliseconds(750));
+DateTimeOffset tick = new(2026, 11, 25, 15, 0, 0, TimeSpan.Zero);
+placementChecks++;
+bool initialWait = placementStabilizer.Observe(candidatePlan, tick) is null;
+Console.WriteLine($"{(initialWait ? "PASS" : "FAIL")} Plan waits for repeat observation");
+if (!initialWait) failures++;
+placementChecks++;
+bool emittedOnce =
+    placementStabilizer.Observe(candidatePlan, tick.AddSeconds(1))?.Status == PlacementStatus.WouldMove &&
+    placementStabilizer.Observe(candidatePlan, tick.AddSeconds(2)) is null;
+Console.WriteLine($"{(emittedOnce ? "PASS" : "FAIL")} Stable dry-run plan emits once");
+if (!emittedOnce) failures++;
+placementChecks++;
+bool changedPlanPending =
+    placementStabilizer.Observe(noOpPlan, tick.AddSeconds(3)) is null &&
+    placementStabilizer.Observe(noOpPlan, tick.AddSeconds(4))?.Status == PlacementStatus.AlreadyOnTarget;
+Console.WriteLine($"{(changedPlanPending ? "PASS" : "FAIL")} Correct placement supersedes stale plan");
+if (!changedPlanPending) failures++;
+placementStabilizer.Reset();
+placementChecks++;
+bool reconnectResets = placementStabilizer.Observe(candidatePlan, tick.AddSeconds(5)) is null;
+Console.WriteLine($"{(reconnectResets ? "PASS" : "FAIL")} Reconnect resets placement candidate");
+if (!reconnectResets) failures++;
+
+Console.WriteLine($"{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks - failures}/{checks.Length + topologyChecks.Length + stabilityChecks + steamChecks + 6 + placementChecks} total checks passed");
+
 return failures == 0 ? 0 : 1;

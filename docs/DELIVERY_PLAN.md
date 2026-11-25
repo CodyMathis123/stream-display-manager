@@ -33,6 +33,17 @@ Build a minimal .NET Windows tray/observer application:
 
 **Acceptance:** automatic move and restore in Starfield and at least one other borderless game, no unrelated windows affected.
 
+## Phase 2A/B — Pure placement assessment and dry-run (implemented)
+
+- A pure `PlacementPlanner` accepts stable, active display rectangles, Steam session App ID and observed top-level game windows.
+- Only the observed Starfield diagnostic rule (Steam App ID `1716740`, process name `Starfield`) is available initially. This is **not proof** of process ownership sufficient to authorize actual window mutations.
+- Refuse to guess when Steam is unconfirmed, virtual targets are multiple, game windows are ambiguous/minimized/small, or window center and monitor attribution disagree.
+- Assess a game already on the virtual display as `AlreadyOnTarget`; assess a candidate on the physical monitor as `WouldMove`, with `dryRun=true` and `executorEnabled=false`.
+- Debounce the assessment over multiple observations before logging `placement_plan`. Reset after a stream ends.
+- Window moving, restoration, process-start identity checks, QueryDisplayConfig target identity and fullscreen policy are **still not implemented**.
+
+**Acceptance:** all pure tests and CI pass, and real games produce diagnostic no-op or dry-run results without moving any windows. A future release must not equate a dry-run candidate with permission to move.
+
 ## Phase 3 — Profiles and optional topology changes
 
 - Support docked/handheld/other profiles using actual streamed mode.

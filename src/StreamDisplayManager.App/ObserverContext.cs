@@ -21,6 +21,8 @@ internal sealed class ObserverContext : ApplicationContext
     private string? _previousSerializedSnapshot;
     private readonly TopologyStabilizer _topologyStabilizer =
         new(TimeSpan.FromMilliseconds(750));
+    private readonly PlacementPlanStabilizer _placementStabilizer =
+        new(TimeSpan.FromMilliseconds(750));
     private bool _closed;
 
     public ObserverContext()
@@ -185,6 +187,57 @@ internal sealed class ObserverContext : ApplicationContext
             {
                 _steamEvidence.ResetAfterDetachedVirtualDisplay();
                 _hadConfirmedVirtualSession = false;
+            }
+
+            // Phase 2A/2B: pure placement diagnostics. This deliberately
+            // does not invoke any Win32 movement APIs, even for WouldMove.
+            if (_sessionPhase == SessionPhase.Streaming && stable &&
+                _steamEvidence.IsActive && snapshot.SteamRunning)
+            {
+                var planningInput = new PlacementObservation(
+                    SessionConfirmed: true,
+                    TopologyStable: true,
+                    SteamAppId: _steamEvidence.AppId,
+                    Screens: snapshot.Screens.Select(screen =>
+                    {
+                        ActiveScreen? active = topology.Screens.FirstOrDefault(t =>
+                            string.Equals(t.DeviceName, screen.DeviceName,
+                                StringComparison.OrdinalIgnoreCase));
+                        return new PlacementScreen(
+                            screen.DeviceName, screen.X, screen.Y, screen.Width, screen.Height,
+                            active?.Kind == "virtual-candidate", active?.Kind == "physical");
+                    }).ToArray(),
+                    Windows: snapshot.Windows.Select(window =>
+                        new PlacementWindow(window.WindowHandle, window.ProcessId,
+                            window.ProcessName, window.DeviceName,
+                            window.X, window.Y, window.Width, window.Height,
+                            window.IsMinimized)).ToArray());
+
+                PlacementPlan plan = PlacementPlanner.Evaluate(planningInput);
+                PlacementPlan? stablePlan = _placementStabilizer.Observe(
+                    plan, DateTimeOffset.UtcNow);
+                if (stablePlan is not null)
+                {
+                    _log.Write("placement_plan", "dry-run", new
+                    {
+                        status = stablePlan.Status.ToString(),
+                        stablePlan.Reason,
+                        stablePlan.AppId,
+                        stablePlan.WindowHandle,
+                        stablePlan.SourceDisplay,
+                        stablePlan.TargetDisplay,
+                        stablePlan.IsDryRun,
+                        _steamEvidence.SessionNumber,
+                        identityConfidence = "provisional-process-rule",
+                        executorEnabled = false
+                    });
+                }
+            }
+            else
+            {
+                // A new stream must not inherit a candidate from an earlier
+                // session, even when Steam reuses the same game window.
+                _placementStabilizer.Reset();
             }
 
             _tray.Text = !stable
