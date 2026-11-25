@@ -106,6 +106,30 @@ internal sealed class VirtualOnlyDisplayController
         }
     }
 
+    // Steam can detach SudoVDA before we attempt to restore a CCD snapshot.
+    // Its saved virtual path is no longer valid then; Windows may already have
+    // brought back the physical desktop. Treat that as successful recovery.
+    private bool CompleteIfPhysicalDesktop(string reason)
+    {
+        if (!HasJournal)
+            return false;
+        DesktopSnapshot snapshot = WindowsObserver.Read();
+        bool hasVirtual = snapshot.Screens.Any(s =>
+            snapshot.Adapters.Any(a => a.IsSudoVdaCandidate &&
+                string.Equals(a.DeviceName, s.DeviceName, StringComparison.OrdinalIgnoreCase)));
+        bool hasPhysical = snapshot.Screens.Any(s =>
+            snapshot.Adapters.Any(a => !a.IsSudoVdaCandidate &&
+                a.IsAttachedToDesktop &&
+                string.Equals(a.DeviceName, s.DeviceName, StringComparison.OrdinalIgnoreCase)));
+        if (hasVirtual || !hasPhysical)
+            return false;
+
+        File.Delete(_journalPath);
+        _switched = false;
+        _log.Write("display_restore", "physical-desktop-already-recovered", new { reason });
+        return true;
+    }
+
     public bool Restore(string reason)
     {
         if (!HasJournal)
@@ -115,6 +139,9 @@ internal sealed class VirtualOnlyDisplayController
         }
         try
         {
+            if (CompleteIfPhysicalDesktop(reason))
+                return true;
+
             var before = JsonSerializer.Deserialize<Configuration>(File.ReadAllText(_journalPath),
                 new JsonSerializerOptions { IncludeFields = true })
                 ?? throw new InvalidOperationException("Invalid restore journal.");
@@ -137,6 +164,19 @@ internal sealed class VirtualOnlyDisplayController
         }
         catch (Exception ex)
         {
+            // The virtual display can disappear between the preflight and the
+            // restore API call. Check for successful physical recovery once more.
+            try
+            {
+                if (CompleteIfPhysicalDesktop(reason))
+                    return true;
+            }
+            catch (Exception recoveryError)
+            {
+                _log.Write("display_restore", "recovery-check-failed", new {
+                    reason, error = recoveryError.GetType().Name, recoveryError.Message
+                });
+            }
             _log.Write("display_restore", "failed", new { reason, error = ex.GetType().Name, ex.Message });
             return false;
         }
