@@ -29,6 +29,8 @@ internal sealed class ObserverContext : ApplicationContext
     private GameWindowMoveResult? _pendingMoveVerification;
     private DateTimeOffset _lastMoveAttemptUtc;
     private int _verificationCount;
+    private readonly VirtualOnlyDisplayController _virtualOnly;
+    private bool _virtualOnlyEnabled;
     private bool _captureBusy;
     private bool _closed;
 
@@ -39,6 +41,8 @@ internal sealed class ObserverContext : ApplicationContext
             "StreamDisplayManager", "logs");
 
         _log = new JsonLog(logDirectory);
+        _virtualOnly = new VirtualOnlyDisplayController(_log);
+        _virtualOnly.RecoverOnStartup();
 
         // Start at EOF: historical Steam sessions are never evidence of a live stream.
         try
@@ -57,6 +61,26 @@ internal sealed class ObserverContext : ApplicationContext
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Capture snapshot", null, (_, _) => Capture("manual"));
+        var virtualOnlyItem = new ToolStripMenuItem("Use virtual-only during streaming") {
+            CheckOnClick = true, Checked = false
+        };
+        virtualOnlyItem.CheckedChanged += (_, _) =>
+        {
+            _virtualOnlyEnabled = virtualOnlyItem.Checked;
+            _log.Write("display_strategy", _virtualOnlyEnabled ? "virtual-only" : "window-placement", new { });
+            if (!_virtualOnlyEnabled)
+                _virtualOnly.Restore("strategy-disabled");
+            Capture("strategy-changed");
+        };
+        menu.Items.Add(virtualOnlyItem);
+        menu.Items.Add("Restore physical display now", null, (_, _) =>
+        {
+            _virtualOnlyEnabled = false;
+            virtualOnlyItem.Checked = false;
+            if (!_virtualOnly.Restore("manual-menu"))
+                _virtualOnly.EmergencyExtend();
+            Capture("manual-restore");
+        });
         menu.Items.Add("Open diagnostics folder", null, (_, _) =>
         {
             try
@@ -199,12 +223,27 @@ internal sealed class ObserverContext : ApplicationContext
                 _hadConfirmedVirtualSession = false;
             }
 
+            // Only switch after a corroborated, stable Steam/SudoVDA session.
+            // A disconnected virtual path or explicit Steam end restores promptly.
+            if (_virtualOnly.IsActive || _virtualOnly.HasJournal)
+            {
+                if (!_virtualOnlyEnabled || !_steamEvidence.IsActive ||
+                    _steamEvidence.EndObserved || !snapshot.SteamRunning || !virtualActive)
+                    _virtualOnly.Restore("session-ended-or-virtual-lost");
+            }
+            else if (_virtualOnlyEnabled && _sessionPhase == SessionPhase.Streaming &&
+                     stable && virtualActive && _steamEvidence.IsActive &&
+                     !_steamEvidence.EndObserved && snapshot.SteamRunning)
+            {
+                _virtualOnly.Switch(snapshot, "confirmed-steam-stream");
+            }
+
             VerifyPendingMove(snapshot);
 
             // Game-agnostic phase 2C: Steam App ID + stable SudoVDA topology +
             // a known game process rule or verified Steam install executable.
             // No blind foreground-window or unrelated desktop window moves.
-            if (_sessionPhase == SessionPhase.Streaming && stable &&
+            if (!_virtualOnlyEnabled && _sessionPhase == SessionPhase.Streaming && stable &&
                 _steamEvidence.IsActive && snapshot.SteamRunning)
             {
                 SteamGameIdentityScan gameIdentity = _gameProcessLocator.Inspect(
@@ -353,7 +392,9 @@ internal sealed class ObserverContext : ApplicationContext
                 _lastGameIdentitySignature = null;
             }
 
-            _tray.Text = !stable
+            _tray.Text = _virtualOnly.IsActive
+                ? "Stream Display Manager: virtual-only streaming"
+                : !stable
                 ? "Stream Display Manager: topology changing"
                 : _sessionPhase == SessionPhase.Streaming
                     ? "Stream Display Manager: stream confirmed (game auto)"
@@ -497,6 +538,7 @@ internal sealed class ObserverContext : ApplicationContext
         if (_closed)
             return;
 
+        _virtualOnly.Restore("application-exit");
         _log.Write("lifecycle", "stopped", new { mode = "steam-game-auto-experimental" });
         _closed = true;
 
