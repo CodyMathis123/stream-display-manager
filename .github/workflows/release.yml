@@ -1,0 +1,76 @@
+name: Publish verified Windows MSI release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/Production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select successful Production CI for this exact commit
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(gh api "repos/$REPO/actions/workflows/native-ci.yml/runs?branch=Production&status=success&per_page=100")"
+          run="$(jq -r --arg sha "$HEAD_SHA" \
+            '[.workflow_runs[] | select(.head_sha == $sha and .event == "push" and .conclusion == "success")] | first | .id // empty' <<< "$response")"
+          if [[ -z "$run" ]]; then
+            echo "No successful Production push CI run for $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "run_id=$run" >> "$GITHUB_OUTPUT"
+          echo "Using verified Production CI run $run ($HEAD_SHA)"
+
+      - name: Download CI-produced MSI (do not rebuild)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "${{ steps.verify.outputs.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name StreamDisplayManager-MSI --dir dist
+          mapfile -t msis < <(find dist -type f -name 'StreamDisplayManager-Setup-*-x64.msi')
+          if [[ "${#msis[@]}" -ne 1 ]]; then
+            echo "Expected one verified MSI, got ${#msis[@]}" >&2
+            exit 1
+          fi
+          file="$(basename "${msis[0]}")"
+          if [[ ! "$file" =~ ^StreamDisplayManager-Setup-(1\.0\.[0-9]+)-x64\.msi$ ]]; then
+            echo "Unexpected MSI filename: $file" >&2
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "MSI_PATH=${msis[0]}" >> "$GITHUB_ENV"
+          sha256sum "${msis[0]}" | tee dist/SHA256SUMS
+
+      - name: Publish tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to overwrite immutable asset" >&2
+            exit 1
+          fi
+          gh release create "$tag" "$MSI_PATH" dist/SHA256SUMS \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Stream Display Manager $VERSION" \
+            --notes "Verified native Windows x64 MSI from successful Production CI run ${{ steps.verify.outputs.run_id }} (commit ${{ github.sha }}). No .NET runtime required. Download the MSI, then install or upgrade normally. Includes native executable version metadata and Windows login startup."
+          echo "Published $tag from verified Production CI asset"
