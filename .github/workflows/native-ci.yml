@@ -40,6 +40,27 @@ jobs:
           $p = Start-Process -FilePath $app -ArgumentList '--self-test' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Native self-test failed: $($p.ExitCode)" }
           if ((Get-Item $app).Length -gt 4000000) { throw 'Native executable unexpectedly large' }
+      - name: Setup .NET for WiX 5 packaging
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build isolated native preview MSI
+        shell: pwsh
+        run: |
+          $version = "0.2.$env:GITHUB_RUN_NUMBER"
+          dotnet build installer/StreamDisplayManager.Native.wixproj -c Release -p:StreamDisplayManagerVersion=$version
+          if ($LASTEXITCODE -ne 0) { throw 'Native preview MSI failed' }
+          $msis = @(Get-ChildItem native-installer-output -Filter '*.msi' -Recurse)
+          if ($msis.Count -ne 1) { throw 'Expected exactly one native preview MSI' }
+          Write-Host "Native MSI: $($msis[0].FullName) ($($msis[0].Length) bytes)"
+      - name: Upload native preview MSI
+        uses: actions/upload-artifact@v7
+        with:
+          name: StreamDisplayManager-NativePreview-MSI
+          path: native-installer-output/**/*.msi
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload native standalone preview
         uses: actions/upload-artifact@v7
         with:
