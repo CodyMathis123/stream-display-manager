@@ -197,8 +197,10 @@ public sealed class PlacementPlanStabilizer(TimeSpan minimumDuration)
 
 
 // Generic auto-placement policy for confidently identified Steam game windows.
-// One initial correction and one verified follow-up for a game that resets
-// its output after launch (as observed in DOOM). No continuous fight/loop.
+// One initial correction and one evidence-backed follow-up if a game resets
+// its output or replaces its top-level HWND (observed with DOOM and RDR2).
+// A successful native call plus immediate observed target location is valid
+// evidence even if the game replaces that HWND before delayed verification.
 public sealed class AutomaticPlacementPolicy
 {
     public const int MaxAttemptsPerSession = 2;
@@ -208,6 +210,7 @@ public sealed class AutomaticPlacementPolicy
     private string? _ownedWindow;
     private uint? _ownedPid;
     private bool _firstMoveVerified;
+    private bool _firstMoveImmediatelyOnTarget;
 
     public AutoMoveDecision Observe(PlacementPlan plan, long sessionNumber)
     {
@@ -222,6 +225,7 @@ public sealed class AutomaticPlacementPolicy
             _ownedWindow = null;
             _ownedPid = null;
             _firstMoveVerified = false;
+            _firstMoveImmediatelyOnTarget = false;
         }
 
         if (plan.Status == PlacementStatus.AlreadyOnTarget)
@@ -245,16 +249,37 @@ public sealed class AutomaticPlacementPolicy
         if (_attempts >= MaxAttemptsPerSession)
             return new(false, "Two corrections used for this Steam session.", true);
 
-        if (!string.Equals(_ownedWindow, plan.WindowHandle, StringComparison.OrdinalIgnoreCase)
-            || _ownedPid != pid)
-            return new(false, "Game window/PID changed; no retry on another process.", true);
+        if (_ownedPid != pid)
+            return new(false, "Game PID changed; no retry on a different process.", true);
 
-        if (!_firstMoveVerified)
-            return new(false, "First window move was not verified on SudoVDA.", true);
+        if (!_firstMoveVerified && !_firstMoveImmediatelyOnTarget)
+            return new(false, "First move never reached SudoVDA; no follow-up.", true);
 
+        string previousHandle = _ownedWindow!;
+        bool windowRecreated = !string.Equals(
+            previousHandle, plan.WindowHandle, StringComparison.OrdinalIgnoreCase);
         _attempts = 2;
-        return new(true, "Window returned to physical after a verified automatic move.",
-            false, 2);
+        _ownedWindow = plan.WindowHandle;
+        return new(true, windowRecreated
+            ? "Same game PID created a new HWND on physical; follow-up correction."
+            : "Previously moved game returned to physical; follow-up correction.",
+            false, 2, windowRecreated ? previousHandle : null);
+    }
+
+    // Validates immediate post-SetWindowPos geometry for the first attempt.
+    // This enables a single follow-up if RDR2 replaces the original window
+    // before any delayed snapshot can re-observe that HWND.
+    public bool ConfirmImmediateMove(
+        string windowHandle, uint processId, long appId, long sessionNumber,
+        int attemptNumber, bool onTarget)
+    {
+        if (!onTarget || sessionNumber != _session || appId != _appId ||
+            attemptNumber != 1 || _attempts != 1 || processId != _ownedPid ||
+            !string.Equals(_ownedWindow, windowHandle, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        _firstMoveImmediatelyOnTarget = true;
+        return true;
     }
 
     public bool ConfirmOwnedMove(
@@ -273,4 +298,5 @@ public sealed class AutomaticPlacementPolicy
 }
 
 public sealed record AutoMoveDecision(
-    bool ShouldAttempt, string Reason, bool Suppressed = false, int AttemptNumber = 0);
+    bool ShouldAttempt, string Reason, bool Suppressed = false,
+    int AttemptNumber = 0, string? PreviousWindowHandle = null);
