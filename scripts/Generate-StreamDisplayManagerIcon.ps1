@@ -1,5 +1,5 @@
 # Generate the Win32/MSI Stream Display Manager application icon using the same design
-# as TrayIconFactory: a cyan virtual display overlapping a physical monitor.
+# as a single bold monitor with a play triangle, legible at 16 pixels.
 # Creates a standard multi-resolution PNG-compressed ICO (16/24/32/48/64/256).
 param([Parameter(Mandatory=$true)][string]$OutputPath)
 $ErrorActionPreference = 'Stop'
@@ -17,30 +17,33 @@ function New-IconPng([int]$Size) {
             $scale = [single]($Size / 64.0)
             $graphics.ScaleTransform($scale, $scale)
 
-            $background = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(17, 34, 49))
-            $outline = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(83, 207, 202), [single]4.5)
-            $faint = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(55, 108, 125), [single]1.6)
-            $pulse = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(230, 250, 249), [single]5.2)
+            $background = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(14, 28, 49))
+            $white = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::White)
+            $cyan = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(37, 226, 222), [single]6.0)
             try {
-                $outline.Alignment = [System.Drawing.Drawing2D.PenAlignment]::Inset
-                $pulse.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
-                $pulse.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-                $pulse.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
-                $graphics.FillEllipse($background, [System.Drawing.RectangleF]::new(3, 3, 58, 58))
-                $graphics.DrawEllipse($outline, [System.Drawing.RectangleF]::new(3.5, 3.5, 57, 57))
-                # Monitor outline, virtual overlay and streaming arrow.
-                $graphics.DrawRectangle($pulse, [single]11, [single]17, [single]33, [single]24)
-                $graphics.DrawLine($faint, [single]28, [single]41, [single]28, [single]45)
-                $graphics.DrawLine($faint, [single]22, [single]45, [single]34, [single]45)
-                $graphics.FillRectangle($background, [single]25, [single]27, [single]29, [single]22)
-                $graphics.DrawRectangle($outline, [single]25, [single]27, [single]29, [single]22)
-                $graphics.DrawLine($pulse, [single]32, [single]38, [single]46, [single]38)
-                $graphics.DrawLine($pulse, [single]41, [single]33, [single]46, [single]38)
-                $graphics.DrawLine($pulse, [single]41, [single]43, [single]46, [single]38)
+                $cyan.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+                $cyan.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+                $cyan.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+
+                # A large, bold silhouette stands out on light and dark taskbars.
+                $graphics.FillEllipse($background, [System.Drawing.RectangleF]::new(1.5, 1.5, 61, 61))
+                $graphics.DrawRectangle($cyan, [single]12, [single]18, [single]40, [single]29)
+
+                # The triangle fills several real pixels, even at 16x16.
+                [System.Drawing.PointF[]]$triangle = @(
+                    [System.Drawing.PointF]::new(27, 25),
+                    [System.Drawing.PointF]::new(27, 40),
+                    [System.Drawing.PointF]::new(43, 32.5)
+                )
+                $graphics.FillPolygon($white, $triangle)
+
+                # Avoid one-pixel details in the 16px and 24px tray frames.
+                if ($Size -ge 32) {
+                    $graphics.DrawLine($cyan, [single]32, [single]49, [single]32, [single]54)
+                    $graphics.DrawLine($cyan, [single]25, [single]54, [single]39, [single]54)
+                }
             }
-            finally {
-                $background.Dispose(); $outline.Dispose(); $faint.Dispose(); $pulse.Dispose()
-            }
+            finally { $background.Dispose(); $white.Dispose(); $cyan.Dispose() }
         }
         finally { $graphics.Dispose() }
         $stream = [System.IO.MemoryStream]::new()
