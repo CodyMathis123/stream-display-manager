@@ -38,3 +38,14 @@ GitHub issues are the canonical unfinished-work list. Focused current items:
 - [#6 — Release/distribution hygiene](https://github.com/CodyMathis123/stream-display-manager/issues/6)
 
 Historical managed WinForms and experimental game-window relocation work was retired. Do not treat old PR/issue comments as current design instructions.
+
+## Diagnostics navigation
+
+- [Diagnostics.h](../native/Diagnostics.h) / [Diagnostics.cpp](../native/Diagnostics.cpp):
+  bounded per-user daily JSONL writing, retention, and native export.
+- [AppRuntime.cpp](../native/AppRuntime.cpp): existing `Log` facade delegates to
+  diagnostics; still owns settings/version/mode snapshot.
+- [StreamDisplayManager.cpp](../native/StreamDisplayManager.cpp): adds run/session
+  correlation to events and exposes **Export diagnostics...** on the tray.
+- [Native design](NATIVE.md#local-diagnostics-no-windows-event-log-integration):
+  file naming, export limits, metadata/privacy guarantees.
