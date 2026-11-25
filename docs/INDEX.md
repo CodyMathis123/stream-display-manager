@@ -61,3 +61,14 @@ Historical managed WinForms and experimental game-window relocation work was ret
   what to test on the real 4K host.
 - [Bug #11](https://github.com/CodyMathis123/stream-display-manager/issues/11):
   observed Win32 error 87 in 4K secondary-display sessions.
+
+## Display strategies
+
+- [DisplayStrategy.h](../native/DisplayStrategy.h): persisted mutually
+  exclusive mode names and topology-mode predicate
+- [VirtualPrimaryCandidate.h](../native/VirtualPrimaryCandidate.h):
+  pure transformation that keeps two active paths, putting SudoVDA at (0,0)
+- [WindowRelocator.h](../native/WindowRelocator.h): bounded, opt-in
+  foreground Steam-game window movement with original-window restoration
+- [Native operation notes](NATIVE.md#strategy-submenu-and-virtual-primary-ab-tests-2026-11-25):
+  tray behavior, migration, safeguards and manual DOOM comparison tests
