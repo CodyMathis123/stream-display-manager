@@ -5,7 +5,7 @@ using StreamDisplayManager.Core;
 
 namespace StreamDisplayManager.App;
 
-/// <summary>Read-only Phase 1 diagnostic tray app. Does not mutate windows or displays.</summary>
+/// <summary>Steam observer with one-shot DOOM auto-placement experiment; other games stay read-only.</summary>
 internal sealed class ObserverContext : ApplicationContext
 {
     private readonly NotifyIcon _tray;
@@ -23,6 +23,11 @@ internal sealed class ObserverContext : ApplicationContext
         new(TimeSpan.FromMilliseconds(750));
     private readonly PlacementPlanStabilizer _placementStabilizer =
         new(TimeSpan.FromMilliseconds(750));
+    private readonly ExperimentalAutoMovePolicy _autoMovePolicy = new();
+    private ExperimentalMoveResult? _pendingMoveVerification;
+    private DateTimeOffset _lastMoveAttemptUtc;
+    private int _verificationCount;
+    private bool _captureBusy;
     private bool _closed;
 
     public ObserverContext()
@@ -73,7 +78,7 @@ internal sealed class ObserverContext : ApplicationContext
         _tray = new NotifyIcon
         {
             Icon = _appIcon,
-            Text = "Stream Display Manager (observe only)",
+            Text = "Stream Display Manager (DOOM auto experiment)",
             ContextMenuStrip = menu,
             Visible = true
         };
@@ -86,7 +91,9 @@ internal sealed class ObserverContext : ApplicationContext
 
         _log.Write("lifecycle", "started", new
         {
-            mode = "read-only",
+            mode = "doom-auto-experimental",
+            experimentalAutoMoveAppId = ExperimentalAutoMovePolicy.EnabledAppId,
+            oneAttemptPerSession = true,
             schema = 1,
             logDirectory
         });
@@ -96,9 +103,10 @@ internal sealed class ObserverContext : ApplicationContext
 
     private void Capture(string reason)
     {
-        if (_closed)
+        if (_closed || _captureBusy)
             return;
 
+        _captureBusy = true;
         try
         {
             ReadSteamEvidence();
@@ -189,8 +197,11 @@ internal sealed class ObserverContext : ApplicationContext
                 _hadConfirmedVirtualSession = false;
             }
 
-            // Phase 2A/2B: pure placement diagnostics. This deliberately
-            // does not invoke any Win32 movement APIs, even for WouldMove.
+            VerifyPendingMove(snapshot);
+
+            // Phase 2C experiment: planner stays pure. Only DOOM can invoke
+            // one Win32 move, after a confirmed stream and stable wrong-target
+            // assessment. All other games remain diagnostic-only.
             if (_sessionPhase == SessionPhase.Streaming && stable &&
                 _steamEvidence.IsActive && snapshot.SteamRunning)
             {
@@ -218,7 +229,12 @@ internal sealed class ObserverContext : ApplicationContext
                     plan, DateTimeOffset.UtcNow);
                 if (stablePlan is not null)
                 {
-                    _log.Write("placement_plan", "dry-run", new
+                    AutoMoveDecision autoDecision = _autoMovePolicy.Observe(
+                        stablePlan, _steamEvidence.SessionNumber);
+                    bool experimentalExecutor = stablePlan.AppId ==
+                        ExperimentalAutoMovePolicy.EnabledAppId;
+                    _log.Write("placement_plan",
+                        experimentalExecutor ? "doom-auto-experimental" : "dry-run", new
                     {
                         status = stablePlan.Status.ToString(),
                         stablePlan.Reason,
@@ -226,11 +242,35 @@ internal sealed class ObserverContext : ApplicationContext
                         stablePlan.WindowHandle,
                         stablePlan.SourceDisplay,
                         stablePlan.TargetDisplay,
-                        stablePlan.IsDryRun,
+                        plannerIsDryRun = stablePlan.IsDryRun,
                         _steamEvidence.SessionNumber,
                         identityConfidence = "provisional-process-rule",
-                        executorEnabled = false
+                        executorEnabled = experimentalExecutor,
+                        autoDecision.Reason,
+                        autoDecision.ShouldAttempt
                     });
+
+                    if (autoDecision.ShouldAttempt)
+                    {
+                        ExperimentalMoveResult result =
+                            ExperimentalDoomMover.Attempt(stablePlan, snapshot, _log);
+                        if (result.Attempted)
+                        {
+                            _pendingMoveVerification = result;
+                            _lastMoveAttemptUtc = DateTimeOffset.UtcNow;
+                            _verificationCount = 0;
+                        }
+                    }
+                    else if (autoDecision.Suppressed)
+                    {
+                        _log.Write("move_suppressed", "doom-auto-policy", new
+                        {
+                            stablePlan.AppId,
+                            stablePlan.WindowHandle,
+                            autoDecision.Reason,
+                            _steamEvidence.SessionNumber
+                        });
+                    }
                 }
             }
             else
@@ -243,7 +283,7 @@ internal sealed class ObserverContext : ApplicationContext
             _tray.Text = !stable
                 ? "Stream Display Manager: topology changing"
                 : _sessionPhase == SessionPhase.Streaming
-                    ? "Stream Display Manager: stream confirmed (read only)"
+                    ? "Stream Display Manager: stream confirmed (DOOM auto)"
                     : virtualActive
                         ? "Stream Display Manager: virtual display candidate"
                         : "Stream Display Manager: desktop observer";
@@ -256,6 +296,55 @@ internal sealed class ObserverContext : ApplicationContext
                 ex.Message
             });
         }
+        finally
+        {
+            _captureBusy = false;
+        }
+    }
+
+    private void VerifyPendingMove(DesktopSnapshot snapshot)
+    {
+        if (_pendingMoveVerification is not { Attempted: true } attempt)
+            return;
+
+        TimeSpan elapsed = DateTimeOffset.UtcNow - _lastMoveAttemptUtc;
+        bool sessionEnded = _sessionPhase != SessionPhase.Streaming;
+        if (!sessionEnded &&
+            elapsed < TimeSpan.FromSeconds(_verificationCount == 0 ? 3 : 10))
+            return;
+
+        WindowObservation? window = snapshot.Windows.FirstOrDefault(w =>
+            string.Equals(w.WindowHandle, attempt.WindowHandle,
+                StringComparison.OrdinalIgnoreCase) &&
+            w.ProcessId == attempt.ProcessId);
+
+        bool onVirtual = window is not null &&
+            string.Equals(window.DeviceName, attempt.TargetDisplay,
+                StringComparison.OrdinalIgnoreCase);
+        bool onSource = window is not null &&
+            string.Equals(window.DeviceName, attempt.SourceDisplay,
+                StringComparison.OrdinalIgnoreCase);
+
+        _log.Write("move_verification", "doom-post-win32", new
+        {
+            attempt.WindowHandle,
+            attempt.ProcessId,
+            attempt.ApiSucceeded,
+            attempt.TargetDisplay,
+            elapsedMs = (long)elapsed.TotalMilliseconds,
+            checkNumber = _verificationCount + 1,
+            result = window is null ? "window-not-observed" :
+                onVirtual ? "on-virtual-target" :
+                onSource ? "remained-or-returned-to-physical" : "other-display",
+            actualDisplay = window?.DeviceName,
+            actualRect = window is null ? null :
+                new { window.X, window.Y, window.Width, window.Height },
+            streamActive = !sessionEnded
+        });
+
+        _verificationCount++;
+        if (_verificationCount >= 2 || sessionEnded || window is null)
+            _pendingMoveVerification = null;
     }
 
     private void ReadSteamEvidence()
@@ -311,7 +400,7 @@ internal sealed class ObserverContext : ApplicationContext
         if (_closed)
             return;
 
-        _log.Write("lifecycle", "stopped", new { mode = "read-only" });
+        _log.Write("lifecycle", "stopped", new { mode = "doom-auto-experimental" });
         _closed = true;
 
         _scanTimer.Stop();
