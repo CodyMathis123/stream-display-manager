@@ -21,6 +21,7 @@
 #include "SessionPolicy.h"
 #include "SteamObserver.h"
 #include "AppRuntime.h"
+#include "Diagnostics.h"
 #pragma comment(lib,"user32.lib")
 #pragma comment(lib,"shell32.lib")
 #pragma comment(lib,"advapi32.lib")
@@ -29,11 +30,12 @@
 namespace {
 constexpr UINT kTrayMessage=WM_APP+20;
 constexpr UINT_PTR kPollTimer=1;
-constexpr UINT kToggle=1001,kRestore=1002,kModes=1003,kLogs=1004,kExit=1005,kStartup=1006,kAbout=1007;
+constexpr UINT kToggle=1001,kRestore=1002,kModes=1003,kLogs=1004,kExit=1005,kStartup=1006,kAbout=1007,kExport=1008;
 HWND hwnd=nullptr;
 NOTIFYICONDATAW icon{};
 std::filesystem::path root,logdir,journal,settings;
 bool enabled=false;
+std::string runId;
 sdm::SteamObserver steamObserver;
 sdm::SessionPolicy sessionPolicy;
 int stableCount=0;
@@ -41,7 +43,16 @@ std::wstring oldTopology;
 std::wstring lastModesSignature;
 
 void Log(const std::string& type,const std::string& reason,const std::string& details="") {
-    sdm::Log(logdir,type,reason,details);
+    std::string fields=details;
+    if(!fields.empty())fields+=",";
+    fields+="\"runId\":\""+sdm::Json(runId)+"\"";
+    const bool sessionEvent=steamObserver.session>0 &&
+        (steamObserver.streamActive || std::filesystem::exists(journal) ||
+         type=="steam_signal" || type=="display_restore" || type=="display_repair");
+    if(sessionEvent)
+        fields+=",\"sessionId\":\""+sdm::Json(runId)+"-"+
+            std::to_string(steamObserver.session)+"\"";
+    sdm::Log(logdir,type,reason,fields);
 }
 void Tick() {
     steamObserver.Poll(Log);
@@ -101,6 +112,7 @@ void Menu() {
     AppendMenuW(menu,MF_STRING,kRestore,L"Restore physical display now");
     AppendMenuW(menu,MF_STRING,kModes,L"Capture display modes");
     AppendMenuW(menu,MF_STRING,kLogs,L"Open diagnostics folder");
+    AppendMenuW(menu,MF_STRING,kExport,L"Export diagnostics...");
     AppendMenuW(menu,MF_STRING|(sdm::StartupEnabled()?MF_CHECKED:0),kStartup,L"Start with Windows");
     AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
     AppendMenuW(menu,MF_STRING,kAbout,L"About Stream Display Manager...");
@@ -135,6 +147,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
             Tick();break;
         case kModes: sdm::CaptureModes(logdir,sdm::Screens(true),"manual");break;
         case kLogs:OpenLogFolder();break;
+        case kExport:sdm::ExportDiagnostics(w,logdir,sdm::InstalledFileVersion());break;
         case kStartup:
             if(sdm::StartupEnabled())sdm::SetStartup(false,logdir);
             else if(!sdm::SetStartup(true,logdir)){
@@ -155,6 +168,10 @@ LRESULT CALLBACK WindowProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
     }
 }
 void Prepare() {
+    FILETIME created{};GetSystemTimeAsFileTime(&created);
+    ULARGE_INTEGER stamp{};stamp.LowPart=created.dwLowDateTime;stamp.HighPart=created.dwHighDateTime;
+    // Process-local identifier keeps session IDs distinct across tray restarts.
+    runId=std::to_string(stamp.QuadPart)+"-"+std::to_string(GetCurrentProcessId());
     root=sdm::LocalFolder();logdir=root/L"logs";
     std::filesystem::create_directories(logdir);
     settings=root/L"settings.json";

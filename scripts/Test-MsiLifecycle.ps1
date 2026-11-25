@@ -6,10 +6,17 @@ $ErrorActionPreference = "Stop"
 $msi = (Resolve-Path $MsiPath).Path
 $exe = (Resolve-Path $ExePath).Path
 $installedExe = Join-Path $env:LOCALAPPDATA 'StreamDisplayManager\StreamDisplayManager.Native.exe'
-$eventLog = Join-Path $env:LOCALAPPDATA 'StreamDisplayManager\logs\native-events.jsonl'
+$eventLogFolder = Join-Path $env:LOCALAPPDATA 'StreamDisplayManager\logs'
 function GracefulShutdownCount {
-    if (-not (Test-Path $eventLog)) { return 0 }
-    return @(Get-Content $eventLog -Tail 100 | Where-Object { $_ -like '*"reason":"native-stopped"*' }).Count
+    if (-not (Test-Path $eventLogFolder)) { return 0 }
+    # Check both legacy single-file logs and current daily segments.
+    $files = @(Get-ChildItem -Path $eventLogFolder -Filter 'native-events*.jsonl' -File)
+    $count = 0
+    foreach($file in $files) {
+        $count += @(Get-Content -LiteralPath $file.FullName -Tail 100 |
+            Where-Object { $_ -like '*"reason":"native-stopped"*' }).Count
+    }
+    return $count
 }
 $installLog = Join-Path $env:RUNNER_TEMP 'sdm-install.log'
 $uninstallLog = Join-Path $env:RUNNER_TEMP 'sdm-uninstall.log'

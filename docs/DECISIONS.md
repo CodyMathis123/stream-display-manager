@@ -29,3 +29,16 @@ Decisions describe present intent, not immutable truth. Amend them when real evi
 ## Explicit non-goals
 
 No custom game renderer hooks, universal HWND relocation, per-device profiles, custom SudoVDA driver, automatic 4K forcing, service-based remote control, or deep integration with unrelated PC telemetry. Revisit these only for reproduced, user-visible failures and a small defensible fix.
+
+## D-007 — Per-user session diagnostics, not Windows Event Log (2026-11-25)
+
+**Decision:** Keep structured user-local JSONL as the sole diagnostic event
+source, rotate and prune bounded daily files, add process/session correlation
+and severity, and provide a user-initiated, single-file readable export from
+the tray. **Why:** this is a per-user native utility; Windows event-source
+registration would add installer/privilege complexity, and per-game log files
+would fragment a Steam streaming timeline. **Tradeoff:** use a simple
+text/session summary instead of a live viewer, and keep only a bounded recent
+history. Preserve the legacy single JSONL file without automatic deletion.
+**Status:** proposed in the diagnostics PR. **Non-goals:** Windows Event Log,
+SQLite, logging service, game-specific files and automatic uploads.
