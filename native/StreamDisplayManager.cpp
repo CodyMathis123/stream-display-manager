@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <tlhelp32.h>
 #include "DisplayTopology.h"
 #pragma comment(lib,"user32.lib")
 #pragma comment(lib,"shell32.lib")
@@ -39,6 +40,7 @@ std::string partial;
 std::wstring oldTopology;
 std::wstring lastModesSignature;
 bool missingLogReported=false;
+long long lastAttemptSession=-1;
 
 std::string Utf8(const std::wstring& value) {
     if(value.empty()) return {};
@@ -190,10 +192,17 @@ void PollSteam() {
     CloseHandle(file);
 }
 bool SteamRunning() {
-    // Native toolhelp snapshot avoids a CLR or a management framework.
-    // Steam process presence is corroboration, never sole proof of a stream.
-    // Streaming_log's explicit start marker remains mandatory.
-    return streamActive;
+    HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+    if(snapshot==INVALID_HANDLE_VALUE)return false;
+    PROCESSENTRY32W entry{};entry.dwSize=sizeof(entry);
+    bool found=false;
+    if(Process32FirstW(snapshot,&entry)){
+        do {
+            if(_wcsicmp(entry.szExeFile,L"steam.exe")==0){found=true;break;}
+        }while(Process32NextW(snapshot,&entry));
+    }
+    CloseHandle(snapshot);
+    return found;
 }
 std::wstring Signature(const std::vector<sdm::Screen>& screens) {
     std::wstring result;
@@ -234,7 +243,7 @@ void Tick() {
     }else if(stableCount<3)++stableCount;
     if(signature!=lastModesSignature){
         lastModesSignature=signature;
-        CaptureModes(screens,"topology-change");
+        CaptureModes(sdm::Screens(true),"topology-change");
     }
     const bool virtualPresent=std::any_of(screens.begin(),screens.end(),
         [](const sdm::Screen& s){return s.isVirtual;});
@@ -248,13 +257,14 @@ void Tick() {
                 Log("display_restore","session-ended-or-virtual-detached");
             }else Log("display_restore","pending-retry");
         }
-    }else if(active && !ownsTopology){
+    }else if(active && !ownsTopology && lastAttemptSession!=session){
+        lastAttemptSession=session;
         LONG status=sdm::SwitchVirtualOnly(journal);
         if(status==ERROR_SUCCESS) {
             ownsTopology=true;
             Log("display_switch","virtual-only-active",
                 "\"session\":"+std::to_string(session));
-            CaptureModes(sdm::Screens(),"virtual-only");
+            CaptureModes(sdm::Screens(true),"virtual-only");
         }else{
             Log("display_switch","failed","\"win32Error\":"+std::to_string(status));
         }
@@ -300,7 +310,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
         case kRestore: enabled=false;SaveSettings();
             if(!sdm::Restore(journal))sdm::EmergencyExtend();
             Tick();break;
-        case kModes: CaptureModes(sdm::Screens(),"manual");break;
+        case kModes: CaptureModes(sdm::Screens(true),"manual");break;
         case kLogs:OpenLogFolder();break;
         case kExit: DestroyWindow(w);break;
         }return 0;
@@ -332,7 +342,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int){
             sizeof(DISPLAYCONFIG_MODE_INFO)>0 ? 0 : 1;
     }
     if(wcsstr(command,L"--modes")) {
-        CaptureModes(sdm::Screens(),"command-line");return 0;
+        CaptureModes(sdm::Screens(true),"command-line");return 0;
     }
     if(wcsstr(command,L"--restore"))
         return sdm::Restore(journal)?0:1;
