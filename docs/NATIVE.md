@@ -4,7 +4,7 @@ Stream Display Manager is a small Windows x64 C++20 tray application. The only s
 
 ## Implementation
 
-- Win32 Shell_NotifyIcon, message-only window, per-user singleton mutex.
+- Win32 Shell_NotifyIcon, message-only window, per-user singleton mutex. Tray About dialog shows the app version read from Windows VERSIONINFO in the running executable.
 - Steam host log (streaming_log.txt) opened at EOF; explicit start/end markers, no historical replay.
 - QueryDisplayConfig and SetDisplayConfig switch active Windows paths to the sole SudoVDA output when a live stream is confirmed. The switch is not persisted in the Windows display database.
 - Saved CCD configuration is stored as a versioned binary journal before mutation. Normal session end and startup recovery restore the physical desktop; the journal is cleared when Steam/Windows already restored it.
@@ -15,7 +15,7 @@ Stream Display Manager is a small Windows x64 C++20 tray application. The only s
 
 ## Build and installation
 
-.github/workflows/native-ci.yml uses MSVC x64 C++20 /O2 /MT, resource compiler, and WiX 5. The only MSI is StreamDisplayManager-Setup-<version>-x64.msi. It installs the native app to a per-user directory, sets a normal Start Menu shortcut and an HKCU Run startup registration. No separate service or driver is installed.
+.github/workflows/native-ci.yml uses MSVC x64 C++20 /O2 /MT, resource compiler, and WiX 5. The workflow generates VERSIONINFO from the same 1.0.<run> build version used by the MSI and asserts Windows FileVersion and ProductVersion match the MSI's ProductVersion (the EXE uses a four-part version ending in .0). The only MSI is StreamDisplayManager-Setup-<version>-x64.msi. It installs the native app to a per-user directory, sets a normal Start Menu shortcut and an HKCU Run startup registration. No separate service or driver is installed.
 
 Older managed and native preview installers have different identities. Uninstall them first before installing the single native MSI. No automatic compatibility migration is implemented or required.
 
