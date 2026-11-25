@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="Stream Display Manager"
+           Manufacturer="CodyMathis"
+           Version="$(var.StreamDisplayManagerVersion)"
+           Scope="perUser"
+           UpgradeCode="3AA12A9B-01AE-47BC-AC6E-02E1BB671583">
+    <SummaryInformation Description="Steam Remote Play display companion for Windows" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Stream Display Manager is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="ARPCOMMENTS" Value="A per-user tray utility. Steam and SudoVDA are separately installed; this package does not install drivers or Windows services." />
+    <!-- Graceful close only; never forcibly kill games, Steam, or the observer. -->
+    <util:CloseApplication Id="CloseDisplayManager"
+                           Target="StreamDisplayManager.App.exe"
+                           CloseMessage="yes"
+                           EndSessionMessage="yes"
+                           PromptToContinue="yes"
+                           Timeout="10"
+                           TerminateProcess="0" />
+    <Icon Id="StreamDisplayManagerIcon.ico" SourceFile="$(var.IconPath)" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLFOLDER" Name="StreamDisplayManager">
+        <Component Id="MainExecutable" Guid="*">
+          <File Id="MainExe" Source="$(var.PublishDir)\StreamDisplayManager.App.exe" KeyPath="yes">
+            <Shortcut Id="StartMenuShortcut"
+                      Directory="ProgramMenuFolder"
+                      Name="Stream Display Manager"
+                      Description="Observe Steam Remote Play display sessions"
+                      Advertise="no"
+                      Icon="StreamDisplayManagerIcon.ico"
+                      WorkingDirectory="INSTALLFOLDER" />
+          </File>
+        </Component>
+        <Component Id="AutoStart" Guid="*">
+          <RegistryValue Root="HKCU"
+                         Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                         Name="StreamDisplayManager"
+                         Type="string"
+                         Value="&quot;[INSTALLFOLDER]StreamDisplayManager.App.exe&quot;"
+                         KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Complete" Title="Stream Display Manager" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="AutoStart" />
+    </Feature>
+  </Package>
+</Wix>

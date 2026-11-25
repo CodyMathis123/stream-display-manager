@@ -1,0 +1,13 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <StreamDisplayManagerVersion Condition="'$(StreamDisplayManagerVersion)' == ''">0.1.0</StreamDisplayManagerVersion>
+    <OutputName>StreamDisplayManager-Setup-$(StreamDisplayManagerVersion)-x64</OutputName>
+    <DefineConstants>StreamDisplayManagerVersion=$(StreamDisplayManagerVersion);PublishDir=$(MSBuildThisFileDirectory)..\dist;IconPath=$(MSBuildThisFileDirectory)..\src\StreamDisplayManager.App\Assets\StreamDisplayManager.ico</DefineConstants>
+    <OutputPath>$(MSBuildThisFileDirectory)..\installer-output\</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+</Project>
