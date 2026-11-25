@@ -57,6 +57,13 @@ jobs:
           ./scripts/Test-Msi.ps1 -MsiPath $msis[0].FullName -ExpectedVersion $env:APP_VERSION
           New-Item -ItemType Directory -Force -Path release-output | Out-Null
           Copy-Item -LiteralPath $msis[0].FullName -Destination (Join-Path release-output $expected)
+      - name: MSI install/uninstall smoke test
+        shell: pwsh
+        run: |
+          $msi = @(Get-ChildItem release-output -Filter '*.msi') | Select-Object -First 1
+          if ($null -eq $msi) { throw "MSI missing" }
+          ./scripts/Test-MsiInstall.ps1 -MsiPath $msi.FullName
+
       - name: Upload MSI (no ZIP)
         uses: actions/upload-artifact@v7
         with:
