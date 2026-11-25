@@ -136,3 +136,44 @@ and repair cooldowns are unchanged.
 switch, actual output mode and game selectable modes, reconnect, and physical
 desktop recovery. Unit tests cover pure candidate generation only; Windows
 CI cannot emulate genuine SudoVDA/Steam behavior.
+
+## Strategy submenu and virtual-primary A/B tests (2026-11-25)
+
+The Win32 tray exposes five mutually exclusive **Display handling** strategies:
+Disabled; Observe only; Virtual + move game window (experimental); Virtual
+primary (keep both active); Virtual only (disable physical). The persistent
+string key \`DisplayStrategy\` replaces the old Boolean preference, while old
+\`VirtualOnlyDuringStreaming\` values migrate to virtual-only or observe-only.
+No extra settings window, service, protocol or managed runtime.
+
+The modes are deliberately non-overlapping:
+- **Observe** tracks Steam and display topology but mutates neither.
+- **Disabled** does not poll Steam sessions; choosing it mid-stream explicitly
+  restores a journaled configuration immediately and stops relocation.
+- **Virtual + move** never changes display topology or primary. Up to twelve
+  attempts, spaced by three seconds, consider only the foreground, visible,
+  top-level Steam game executable beneath \`steamapps\\common\`. Successful
+  relocation is verified against SudoVDA's monitor and the original window
+  bounds are retained for best-effort restoration when the stream ends. The
+  game may ignore or undo movement (especially exclusive fullscreen). Logs
+  \`window_move\` events but never saves process titles or executable paths.
+- **Virtual primary** only supports exactly one physical screen and one
+  virtual screen; rebuilds a pure, same-path CCD candidate with virtual
+  source at (0,0) and physical source immediately to the right, validates
+  before writing the journal, applies and verifies that both outputs remain
+  active with SudoVDA primary. Bounded mode-specific repairs preserve the
+  original journal. If a step fails, restores the saved topology. No
+  persistent Windows display configuration writes.
+- **Virtual only** is the previously hardware-validated path.
+
+Normal strategy changes while streaming are **pending until after the
+stream ends and journal restoration completes**. This avoids a new
+mid-game hotplug. Choosing Disabled is an immediate safety stop. The
+existing **Restore physical display now** action also disables automation.
+
+**Manual hardware validation**: A/B test DOOM at 4K with Observe, Virtual +
+move, Virtual primary, and Virtual only. Compare the host Steam green FPS
+counter *after* the game's menu renderer initializes, active display modes,
+SudoVDA capture target, Steam stream quality and post-stream physical
+3440×1440 recovery. Record real failures rather than treating a passing
+Windows unit test as proof of game compatibility.
