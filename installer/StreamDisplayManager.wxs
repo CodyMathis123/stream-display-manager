@@ -10,12 +10,16 @@
     <MajorUpgrade DowngradeErrorMessage="A newer Stream Display Manager version is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <!-- The tray exposes a hidden top-level window so WM_CLOSE is handled by
-         WM_DESTROY, which restores the physical desktop before replacement. -->
+         WM_DESTROY, which restores the desktop before replacement. Older
+         message-only tray builds cannot receive WiX's WM_CLOSE; after 15 s,
+         terminate that legacy process so the upgrade can proceed. The saved
+         recovery journal is still honored by the new app on startup. -->
     <util:CloseApplication Id="CloseRunningTray"
                            Target="StreamDisplayManager.Native.exe"
                            CloseMessage="yes"
                            Timeout="15"
-                           RebootPrompt="yes" />
+                           TerminateProcess="1"
+                           RebootPrompt="no" />
     <!-- Launch the new binary only after a successful interactive install.
          The HKCU Run entry below remains responsible for subsequent logins. -->
     <SetProperty Id="WixUnelevatedShellExecTarget"
